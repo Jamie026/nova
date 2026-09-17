@@ -43,7 +43,7 @@ class PortraitAvatar {
    * @param {HTMLCanvasElement} canvas
    * @param {string} source ruta de la imagen del personaje
    */
-  constructor(canvas, source) {
+  constructor(canvas, source, talkingSource) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d');
     this.state = 'IDLE';
@@ -59,6 +59,16 @@ class PortraitAvatar {
     this.image = new Image();
     this.image.onload = () => { this.ready = true; };
     this.image.src = source || 'assets/nova-avatar.webp';
+
+    // Segundo retrato para cuando habla (sonriendo). Se funde con el primero
+    // en ~250 ms en vez de cambiar de golpe; `talkMix` es cuánto se ve del
+    // segundo (0 = el de siempre, 1 = el que habla).
+    this.talking = new Image();
+    this.talkingReady = false;
+    this.talking.onload = () => { this.talkingReady = true; };
+    this.talking.src = talkingSource || 'assets/nova-avatar-sonriendo.webp';
+    this.talkMix = 0;
+    this.talkTarget = 0;
 
     this.resize = this.resize.bind(this);
     this.tick = this.tick.bind(this);
@@ -80,6 +90,7 @@ class PortraitAvatar {
     if (!PORTRAIT_PALETTE[state]) return;
     this.state = state;
     this.target = { ...PORTRAIT_PALETTE[state], rgb: hexToRgb(PORTRAIT_PALETTE[state].halo) };
+    this.talkTarget = state === 'SPEAKING' ? 1 : 0;
   }
 
   /** @param {number} value 0..1, energía del micrófono */
@@ -114,6 +125,7 @@ class PortraitAvatar {
       this.blend.rgb[i] += (this.target.rgb[i] - this.blend.rgb[i]) * k;
     }
     this.smoothLevel += (this.level - this.smoothLevel) * (1 - Math.exp(-delta * 12));
+    this.talkMix += (this.talkTarget - this.talkMix) * (1 - Math.exp(-delta * 10));
     this.phase = (this.phase + delta * this.blend.pulse) % 1000;
 
     this.draw();
@@ -160,20 +172,28 @@ class PortraitAvatar {
     if (!this.ready) return;
 
     // 3. El retrato, escalado para caber entero y con una flotación mínima.
+    // Los dos retratos se escalan a la MISMA altura y se apoyan en la misma
+    // línea, así el cambio de uno a otro no salta de tamaño ni de sitio.
     const float = Math.sin(this.phase * TAU_P * 0.5) * 3;
-    const scale = Math.min(w / this.image.width, (h * 0.92) / this.image.height);
-    const dw = this.image.width * scale;
-    const dh = this.image.height * scale;
-    const dx = cx - dw / 2;
-    const dy = h * 0.96 - dh + float;
-
-    // La sombra de canvas sigue el canal alfa del PNG, así que el resplandor
-    // abraza la silueta del personaje en lugar de dibujar un rectángulo.
-    ctx.save();
-    ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${0.55 * energy})`;
-    ctx.shadowBlur = 18 + 26 * energy;
-    ctx.drawImage(this.image, dx, dy, dw, dh);
-    ctx.restore();
+    const mix = this.talkingReady ? this.talkMix : 0;
+    const drawPortrait = (image, alpha) => {
+      if (alpha <= 0.01) return;
+      const scale = Math.min(w / image.width, (h * 0.92) / image.height);
+      const dw = image.width * scale;
+      const dh = image.height * scale;
+      const dx = cx - dw / 2;
+      const dy = h * 0.96 - dh + float;
+      // La sombra de canvas sigue el canal alfa del PNG, así que el resplandor
+      // abraza la silueta del personaje en lugar de dibujar un rectángulo.
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${0.55 * energy})`;
+      ctx.shadowBlur = 18 + 26 * energy;
+      ctx.drawImage(image, dx, dy, dw, dh);
+      ctx.restore();
+    };
+    drawPortrait(this.image, 1 - mix);
+    drawPortrait(this.talking, mix);
   }
 }
 

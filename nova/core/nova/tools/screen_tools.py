@@ -32,6 +32,34 @@ def _normalize(text: str) -> str:
     return " ".join(text.lower().translate(table).split())
 
 
+# dirección → (signo de las muescas, rueda horizontal, palabra para el resumen)
+_SCROLL_DIRECTIONS = {
+    "down": (-1, False, "abajo"), "abajo": (-1, False, "abajo"),
+    "up": (1, False, "arriba"), "arriba": (1, False, "arriba"),
+    "left": (-1, True, "la izquierda"), "izquierda": (-1, True, "la izquierda"),
+    "right": (1, True, "la derecha"), "derecha": (1, True, "la derecha"),
+}
+
+
+async def _bring_front(os_adapter: OsAdapter, found) -> None:
+    """Trae la ventana al frente y espera a que esté de verdad pintada.
+
+    Restaurar una ventana minimizada lleva una animación de ~0,5 s; con una
+    espera fija de 0,25 s la captura salía del hueco de 183x34 px que deja
+    Windows a medio restaurar, y el OCR «no leía ningún texto» (pasó con el
+    launcher del juego)."""
+    os_adapter.focus_window(found.handle)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.1)
+        current = next((w for w in os_adapter.list_windows() if w.handle == found.handle), None)
+        rect = os_adapter.window_rect(found.handle)
+        big_enough = rect is not None and (rect[2] - rect[0]) > 200 and (rect[3] - rect[1]) > 100
+        if current is not None and not current.minimized and big_enough:
+            break
+    await asyncio.sleep(0.3)   # que el compositor termine de pintarla
+
+
 def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
     async def take_screenshot(target: str = "screen", window: str = "",
                               label: str = "captura") -> ToolResult:
@@ -43,8 +71,7 @@ def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
             found = best_window(os_adapter, window)
             if found is None:
                 return ToolResult(False, f"No veo ninguna ventana que se parezca a «{window}»")
-            os_adapter.focus_window(found.handle)
-            await asyncio.sleep(0.25)  # que el compositor termine de pintarla
+            await _bring_front(os_adapter, found)
             rect = os_adapter.window_rect(found.handle)
             if rect is None:
                 return ToolResult(False, f"No pude medir la ventana de {found.title}")
@@ -73,8 +100,7 @@ def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
             found = best_window(os_adapter, window)
             if found is None:
                 return ToolResult(False, f"No veo ninguna ventana que se parezca a «{window}»")
-            os_adapter.focus_window(found.handle)
-            await asyncio.sleep(0.25)
+            await _bring_front(os_adapter, found)
             rect = os_adapter.window_rect(found.handle)
             if rect is None:
                 return ToolResult(False, f"No pude medir la ventana de {found.title}")
@@ -110,6 +136,40 @@ def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
             return ToolResult(False, "No pude hacer clic")
         await asyncio.sleep(0.3)
         return ToolResult(True, f"Hice clic en «{line.text}»", {"x": x, "y": y})
+
+    async def scroll_window(direction: str = "down", amount: int = 5,
+                            window: str = "") -> ToolResult:
+        """Rueda del ratón en el centro de una ventana (o de la que está delante)."""
+        key = _normalize(str(direction))
+        if key not in _SCROLL_DIRECTIONS:
+            return ToolResult(False, "La dirección tiene que ser up, down, left o right")
+        sign, horizontal, word = _SCROLL_DIRECTIONS[key]
+        amount = max(1, min(int(amount), 40))
+        found = None
+        if window:
+            found = best_window(os_adapter, window)
+            if found is None:
+                return ToolResult(False, f"No veo ninguna ventana que se parezca a «{window}»")
+            await _bring_front(os_adapter, found)
+        else:
+            found = next((w for w in os_adapter.list_windows() if w.foreground), None)
+        # La rueda actúa sobre lo que hay bajo el cursor: se lleva al centro de
+        # la ventana, que es donde está el contenido que se quiere desplazar.
+        rect = os_adapter.window_rect(found.handle) if found is not None else None
+        if rect is None:
+            width, height = os_adapter.screen_size()
+            x, y = width // 2, height // 2
+        else:
+            x, y = (rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2
+        if not os_adapter.scroll(x, y, sign * amount, horizontal=horizontal):
+            return ToolResult(False, "No pude mover la rueda del ratón")
+        await asyncio.sleep(0.25)
+        last["reading"] = None   # lo leído antes ya no está donde estaba
+        where = f"en la ventana de {found.title}" if found is not None else "en la pantalla"
+        return ToolResult(True, f"Hice scroll hacia {word} {where} ({amount} muescas). "
+                                "Lo que se ve ahora ha cambiado: vuelve a leer con "
+                                "read_screen si necesitas lo que apareció.",
+                          {"x": x, "y": y, "amount": amount, "direction": key})
 
     async def screenshot_region(left: int, top: int, width: int, height: int,
                                 label: str = "region") -> ToolResult:
@@ -162,6 +222,30 @@ def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
             # click_at, que va a coordenadas a ciegas y sigue siendo alto.
             handler=click_item, risk=Risk.MEDIUM, timeout_s=10,
             confirm_template="¿Hago clic en «{text}»?",
+        ),
+        Tool(
+            name="scroll_window",
+            description=(
+                "Hace scroll con la rueda del ratón en una ventana (o en la que está "
+                "delante si no se indica). `amount` son muescas de la rueda: 3 mueve "
+                "unas líneas, 5 (por defecto) media pantalla, 10 una pantalla entera. "
+                "Sirve para ver más chats, resultados o texto que no cabe: después "
+                "vuelve a leer con read_screen, porque lo leído antes ya no está en el "
+                "mismo sitio."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "direction": {"type": "string", "enum": ["down", "up", "left", "right"],
+                                  "default": "down"},
+                    "amount": {"type": "integer", "minimum": 1, "maximum": 40, "default": 5},
+                    "window": {"type": "string",
+                               "description": "Nombre de la ventana; vacío = la que está delante"},
+                },
+                "additionalProperties": False,
+            },
+            # Riesgo bajo: desplazar una vista no cambia nada ni sale de la máquina.
+            handler=scroll_window, risk=Risk.LOW, timeout_s=10,
         ),
         Tool(
             name="take_screenshot",

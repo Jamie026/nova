@@ -45,7 +45,7 @@ import soundfile as sf
 
 log = logging.getLogger("nova.tts.voice")
 
-SAMPLE_RATE = 24_000          # lo que esperan XTTS y compañía
+SAMPLE_RATE = 24_000          # lo que espera Chatterbox (y XTTS, antes)
 TARGET_SECONDS = 30.0         # medido: más referencia no empeora, y algo ayuda
 GAP_SECONDS = 0.25            # respiración entre frases, para que no se peguen
 _SILENCE_FLOOR = 0.02         # relativo al pico del clip

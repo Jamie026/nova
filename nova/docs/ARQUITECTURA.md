@@ -48,7 +48,7 @@ flujo).
 | VAD | webrtcvad | C puro, decide en microsegundos, sin modelo que cargar. Se ejecuta 100 veces por segundo: aquí la simplicidad **es** rendimiento. |
 | Transcripción | faster-whisper local | DeepSeek no ofrece STT. Local significa latencia estable, coste cero y audio que no sale de la máquina. |
 | Modelo | DeepSeek vía SDK compatible con OpenAI | Soporta *function calling*, que es lo que permite que el modelo elija herramientas declaradas en vez de inventar comandos. |
-| Voz | edge-tts, o XTTS-v2 local | edge-tts da voces neuronales gratis pero cada petición es un websocket contra Microsoft (~1,3 s). XTTS-v2 clona una voz concreta en la GPU, sin red. |
+| Voz | edge-tts, o Chatterbox Turbo local | edge-tts da voces neuronales gratis pero cada petición es un websocket contra Microsoft (~1,3 s). XTTS-v2 clona una voz concreta en la GPU, sin red. |
 | Navegador | Playwright sobre CDP contra el Chrome real | Ver §6. |
 | Ventanas y entrada | ctypes (`SendInput`, `EnumWindows`) + psutil + `Get-StartApps` | Ver §7. |
 | Capturas | mss | ctypes puro sobre la API nativa: ~15 ms en 1080p, recorta regiones sin capturar el escritorio entero y guarda PNG sin necesitar Pillow. |
@@ -83,8 +83,18 @@ IDLE ──palabra activadora──► WAKE_WORD_DETECTED ──► LISTENING
 LISTENING ──fin de voz──► THINKING ──herramientas──► EXECUTING ──► SPEAKING
 SPEAKING ──► LISTENING ──silencio──► SLEEPING ──► IDLE
 SPEAKING + voz del usuario ──► corta la voz ──► LISTENING     (interrupción)
+THINKING/EXECUTING + «para» ──► corta la tarea ──► LISTENING
+cualquiera + «descansa» ──► corta todo ──► despedida ──► SLEEPING ──► IDLE
 cualquiera ──► ERROR ──► IDLE
 ```
+
+Dos órdenes no pasan por el modelo (`agent/dismissal.py`): «descansa» y
+«para». Son las dos que tienen que obedecerse al instante, y el modelo tardaba
+dos segundos en contestar «descansa» con una despedida de cinco. Mientras Nova
+piensa o ejecuta, el micrófono sigue abierto con el mismo filtro de volumen y
+duración que la interrupción, pero lo oído sólo cuenta si es una de esas dos:
+cualquier otra cosa se ignora y la tarea sigue, porque cortar una cadena de
+herramientas a medias por una conversación ajena sería peor que no oír.
 
 Declarar las transiciones no es burocracia: el fallo más caro de un agente de voz
 es quedarse escuchando para siempre porque un componente de audio falló en
@@ -108,7 +118,7 @@ hablar hasta que oyes la primera sílaba:
 | Transcripción final | 220-430 ms | Whisper `small` en float16 **sobre la GPU**. En CPU el mismo modelo tarda 1,5-2,2 s |
 | Modelo (con 38 herramientas) | 1,3 s, de los que la voz espera ~la mitad | Es el término dominante y es red: DeepSeek desde Perú. La respuesta llega en streaming y la voz arranca en cuanto la línea `EN:` está completa; el subtítulo `ES:` sigue llegando mientras ya suena |
 | Ejecución | 50-2000 ms | Depende de la acción |
-| Primera sílaba de voz | 1,3 s (edge) / **0,4 s** (XTTS) | edge-tts paga un websocket nuevo por petición. XTTS emite en streaming desde la MISMA pasada del modelo (`inference_stream`): el audio empieza tras 20 tokens en vez de al final, con idéntica voz (parecido 0,591 vs 0,590 entero). Antes, esperando la síntesis entera, eran 1,65 s de media y hasta 2,8 s |
+| Primera sílaba de voz | 1,3 s (edge) / **1,2-2 s** (Chatterbox) | edge-tts paga un websocket nuevo por petición. XTTS emite en streaming desde la MISMA pasada del modelo (`inference_stream`): el audio empieza tras 20 tokens en vez de al final, con idéntica voz (parecido 0,591 vs 0,590 entero). Antes, esperando la síntesis entera, eran 1,65 s de media y hasta 2,8 s |
 | **Total percibido** | **~2-2,5 s** | medido en turno completo con la voz clonada; antes 2,6-4 s |
 
 Lo que sale de esta tabla:
@@ -126,20 +136,51 @@ Lo que sale de esta tabla:
    por algo que no se usa hasta el final del turno. Y el calentamiento de Whisper usa el mismo `beam_size` y una
    duración realista: con ceros, los núcleos del decodificador se compilaban en
    la primera frase de verdad y esa costaba 2 s en vez de 0,3.
-4. **El TTS no trocea el texto: trocea el audio.** Partir la respuesta en frases
-   cortas para que empezara antes cambiaba la voz entre trozos (parecido 0,54
-   frente a 0,66 entera). `inference_stream` de XTTS resuelve las dos cosas: es
-   una sola generación —la voz es la de la frase entera— que va soltando audio
-   cada 20 tokens. Sólo las frases de menos de 40 caracteres se sintetizan
-   enteras, para poder comprobarlas y reintentar si el modelo se atasca. Y el
-   stream de salida se abre una vez por respuesta, no por trozo.
+4. **La voz clonada es Chatterbox Turbo, y cada oración es una toma entera.**
+   Se midió contra XTTS-v2 y F5-TTS con la misma referencia de Corin, 12
+   frases × 3 tomas y los mismos jueces (Whisper medium para entender, un
+   codificador de hablante independiente para el parecido contra las líneas
+   reales): Chatterbox Turbo se entiende 0,991 con 0 tomas malas de 36 y 0
+   desbocadas; XTTS 0,88 con 5-7 malas y 1 desbocada; F5 0,87 con 7 malas,
+   todas en frases cortas. Parecido: XTTS 0,64, Chatterbox 0,61, F5 0,60
+   (techo 0,68). Velocidad en la RTX 3050: XTTS rtf 0,44, Chatterbox Turbo
+   0,55 (el normal 2,4 y F5 1,6-2,5, sin streaming: inutilizables aquí).
+   Con XTTS hacía falta vigilar cada toma con Whisper y repetir; con
+   Chatterbox no. Su decodificador no es causal, así que no se decodifica por
+   prefijos: cada oración se genera entera (la primera de hasta 80 letras)
+   y las siguientes mientras suena la anterior. Un planificador calcula el
+   retraso mínimo antes de empezar para que ninguna oración llegue tarde
+   (`ChatterboxEngine._initial_delay`). La referencia se prepara una vez
+   (5 s) y el modelo usa sólo sus primeros 10 s.
 5. **La voz no espera al modelo.** El modelo escribe primero la línea hablada y
    luego el subtítulo. Con la respuesta en streaming, la síntesis arranca al
    cerrarse la primera; el subtítulo aparece en pantalla cuando llega, con la
    voz ya sonando. Si el modelo va a recibir el aviso de «afirmas una acción
    que no hiciste», no se adelanta nada: lo adelantado tiene que ser lo que se
    diga.
-6. **Los parciales de transcripción están apagados.** Eran texto en pantalla
+6. **El reproductor mide la velocidad real y acumula colchón sólo si hace
+   falta.** La generación va limitada por la CPU (~20-25 ms por token en el
+   bucle de Python; calentar la GPU no cambia el rtf: 0,57 fría, 0,58 a
+   1,6 GHz), así que cualquier proceso que compita por la CPU la frena y a
+   veces la deja por debajo del tiempo real: el reproductor se quedaba sin
+   audio y la voz se cortaba y seguía. Ahora se mide la velocidad desde el
+   primer token (no desde que se pidió la frase: eso incluía 0,5 s de
+   arranque y hacía creer que iba lenta) y sólo se espera el búfer que falte.
+   Medido en la app: la voz arranca 0,6-1,1 s después de cerrarse la línea
+   inglesa (antes 2,7-6 s) y los turnos duran lo que dura el audio.
+7. **Las frases muy cortas se comprueban con Whisper antes de sonar.** Es el
+   único sitio donde cualquier modelo tropieza («Done.», «Sure!»); un Whisper
+   `base` aparte las transcribe (280 ms) y, si no dicen lo pedido, se repite
+   la toma antes de que suene. Con Chatterbox Turbo no falló ninguna de 36,
+   pero comprobar 0,3 s cuesta menos que oír una mala.
+8. **La voz carga después de Whisper, no a la vez.** Se probó en paralelo
+   (Nova escuchaba a los 17 s y tenía voz a los 35) y el núcleo moría al
+   arrancar una de cada tres veces con un *access violation*: CTranslate2 y
+   PyTorch inicializando CUDA desde dos hilos distintos en el mismo proceso.
+   En serie, escucha a los ~20 s y tiene voz a los ~60, y no se muere. La voz
+   sigue sin bloquear: Chatterbox se carga cuando Whisper ya está y mientras
+   tanto el resto funciona.
+9. **Los parciales de transcripción están apagados.** Eran texto en pantalla
    mientras hablas, pero costaban una decodificación entera cada 900 ms que
    competía por el mismo modelo con la transcripción final y la retrasaba ~2 s.
 
@@ -327,6 +368,14 @@ esa coreografía en manos del modelo significa que a veces el mensaje se envía
 antes de que la imagen termine de adjuntarse. Enviar un mensaje no se deshace, así
 que los tiempos viven en el código y no en el prompt. `send` es `false` por
 defecto: adjuntar y enviar son decisiones distintas.
+
+**`scroll_window` es rueda de ratón, no teclas.** `PageDown` va a la ventana
+enfocada y a lo que dentro de ella tenga el foco (un cuadro de texto, no la
+lista); la rueda va a lo que hay bajo el cursor, así que la herramienta lleva
+el cursor al centro de la ventana y manda una muesca por evento (hay programas
+que cuentan eventos y no unidades). Después de desplazar, la última lectura de
+pantalla caduca: `click_item` obliga a releer, porque las líneas ya no están
+donde estaban.
 
 **`click_at` existe pero el prompt empuja a no usarlo.** Las coordenadas se rompen
 al cambiar de resolución, de escala o de tema. El navegador se controla por rol

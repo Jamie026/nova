@@ -43,6 +43,13 @@ class AdaptadorFalso:
         self.clics.append((x, y))
         return True
 
+    def scroll(self, x, y, clicks, horizontal=False):
+        self.ruedas = getattr(self, "ruedas", []) + [(x, y, clicks, horizontal)]
+        return True
+
+    def screen_size(self):
+        return (1920, 1080)
+
 
 def _tools(monkeypatch, lectura):
     adaptador = AdaptadorFalso()
@@ -100,3 +107,27 @@ def test_riesgos():
     assert tools["read_screen"].risk is Risk.MEDIUM     # el texto de tu pantalla va al modelo
     assert tools["click_item"].risk is Risk.MEDIUM      # clic sobre texto leído: navegación
     assert tools["click_item"].confirmation_text({"index": 3, "text": "Kiawa"}) == "¿Hago clic en «Kiawa»?"
+
+
+@pytest.mark.asyncio
+async def test_scroll_en_el_centro_de_la_ventana_y_la_lectura_caduca(monkeypatch):
+    adaptador, tools = _tools(monkeypatch, _lectura([("Kiawa", 60, 380)]))
+    await tools["read_screen"].handler(window="Discord")
+    r = await tools["scroll_window"].handler(direction="down", amount=4, window="Discord")
+    assert r.ok and "abajo" in r.summary and "read_screen" in r.summary
+    # centro de (100,50)-(900,650); abajo = muescas negativas
+    assert adaptador.ruedas == [(500, 350, -4, False)]
+    # lo leído ya no está donde estaba: click_item obliga a releer
+    r = await tools["click_item"].handler(index=1, text="Kiawa")
+    assert not r.ok and "read_screen primero" in r.summary
+
+
+@pytest.mark.asyncio
+async def test_scroll_sin_ventana_va_a_la_que_esta_delante(monkeypatch):
+    adaptador, tools = _tools(monkeypatch, _lectura([]))
+    r = await tools["scroll_window"].handler(direction="up", amount=2)
+    assert r.ok and adaptador.ruedas == [(500, 350, 2, False)]
+    r = await tools["scroll_window"].handler(direction="right")
+    assert adaptador.ruedas[-1] == (500, 350, 5, True)
+    r = await tools["scroll_window"].handler(direction="diagonal")
+    assert not r.ok

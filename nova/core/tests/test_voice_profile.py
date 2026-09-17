@@ -82,36 +82,3 @@ def test_remuestrea_sin_cambiar_la_duracion(tmp_path):
     _escribe(tmp_path, "agudo.wav", _tono(2.0, sr=48_000), sr=48_000)
     clips = load_clips([tmp_path / "agudo.wav"])
     assert clips and clips[0].seconds == pytest.approx(2.0, abs=0.1)
-
-
-# ---------------------------------------------------------------------------
-# El guardia contra el atasco de XTTS. Vive en el motor, pero es aritmética pura
-# y se prueba sin GPU ni modelo.
-
-def test_detecta_el_atasco_por_duracion():
-    from nova.tts.xtts_engine import looks_degenerate
-
-    texto = "I couldn't close Discord, it's still open. Should I try again?"
-    # Lo que salió de verdad: 10,6 s para 61 caracteres, repitiendo «I, I, I...».
-    assert looks_degenerate(texto, 10.6)
-    # Lo normal para esa frase ronda los 4 s.
-    assert not looks_degenerate(texto, 4.0)
-    assert not looks_degenerate(texto, 7.0)
-
-
-def test_no_marca_como_atasco_una_frase_larga_normal():
-    from nova.tts.xtts_engine import looks_degenerate
-
-    texto = ("I found three images called Corin in Downloads. I opened the newest "
-             "one, tell me if you want another.")
-    assert not looks_degenerate(texto, 7.3)
-
-
-def test_el_guardia_no_se_rompe_con_entradas_raras():
-    from nova.tts.xtts_engine import looks_degenerate
-
-    assert not looks_degenerate("", 5.0)
-    assert not looks_degenerate("   ", 5.0)
-    assert not looks_degenerate("hola", 0.0)
-    # Una palabra suelta tiene poco margen, pero el de gracia evita el falso positivo.
-    assert not looks_degenerate("Done.", 1.4)

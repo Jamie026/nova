@@ -87,5 +87,8 @@ class UnsupportedAdapter:
     def click(self, x: int, y: int, button: str = "left", double: bool = False) -> bool:
         self._fail()
 
+    def scroll(self, x: int, y: int, clicks: int, horizontal: bool = False) -> bool:
+        self._fail()
+
     def screen_size(self) -> tuple[int, int]:
         return (0, 0)

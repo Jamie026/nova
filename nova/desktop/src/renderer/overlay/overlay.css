@@ -19,13 +19,17 @@ html, body {
   cursor: default;
 }
 
+/* El retrato tiene la altura de la ventana menos una banda fija abajo para
+   el texto. Antes eran dos filas de una rejilla («1fr auto»): cuanto más
+   texto había debajo —un subtítulo largo o la pregunta de una confirmación—
+   menos altura le quedaba al retrato y se veía aplastado. Ahora el texto va
+   superpuesto, anclado al borde inferior: si ocupa más que la banda, crece
+   hacia arriba por encima de los pies del retrato, que no cambia de tamaño. */
 .stage {
+  position: relative;
   height: 100%;
-  display: grid;
-  grid-template-rows: 1fr auto;
-  place-items: center;
   padding: 4px 12px 14px;
-  gap: 6px;
+  --readout-band: 66px;
 }
 
 /* El contenedor es vertical porque el retrato lo es (360x469). El skin
@@ -33,7 +37,7 @@ html, body {
    skin no mueve nada del resto de la interfaz. */
 .avatar {
   width: 100%;
-  height: 100%;
+  height: calc(100% - var(--readout-band));
   min-height: 150px;
   -webkit-app-region: drag;
 }
@@ -41,8 +45,14 @@ html, body {
 .avatar canvas { width: 100%; height: 100%; display: block; }
 
 .readout {
-  width: 100%;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 14px;
   display: grid;
+  /* La columna mide lo que el hueco, no lo que el texto: sin esto, un
+     subtítulo largo ensanchaba la columna y se salía por la derecha. */
+  grid-template-columns: minmax(0, 100%);
   gap: 5px;
   justify-items: center;
   -webkit-app-region: no-drag;
@@ -77,17 +87,25 @@ html, body {
   flex: none;
 }
 
+/* Va sobre el retrato cuando es largo, así que lleva su propio fondo: con
+   sólo la sombra del texto, seis líneas encima de la falda no se leían. */
 .transcript {
-  max-width: 320px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: rgba(8, 14, 22, 0.62);
+  backdrop-filter: blur(10px);
   font-size: 13px;
   line-height: 1.35;
   text-align: center;
   color: var(--dim);
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.75);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
   min-height: 0;
   opacity: 0;
   transition: opacity 160ms ease;
 }
+
+.transcript:empty { padding: 0; background: none; }
 
 .transcript[data-visible='true'] { opacity: 1; }
 .transcript[data-final='true'] { color: var(--core); }
@@ -107,26 +125,6 @@ html, body {
 
 .confirm[data-visible='true'] { display: flex; }
 .confirm p { font-size: 13.5px; line-height: 1.4; }
-.confirm .row { display: flex; gap: 8px; }
-
-.confirm button {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: 9px;
-  border: 1px solid var(--edge);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--core);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.confirm button:hover { background: rgba(255, 255, 255, 0.12); }
-.confirm button:focus-visible { outline: 2px solid var(--accept); outline-offset: 2px; }
-.confirm button[data-kind='approve'] { border-color: rgba(63, 224, 176, 0.55); }
-.confirm button[data-kind='deny'] { border-color: rgba(255, 94, 108, 0.55); }
-
 @media (prefers-reduced-motion: reduce) {
   .status, .transcript { transition: none; }
 }

@@ -99,8 +99,10 @@ def build_tts(config: Config):
 
         return MockTts()
 
-    if config.get("tts.provider") == "xtts":
-        engine = _build_xtts(config)
+    if config.get("tts.provider") in ("chatterbox", "xtts"):
+        # "xtts" se acepta por compatibilidad con .env antiguos: la voz clonada
+        # ahora es Chatterbox Turbo (ver tts/chatterbox_engine.py).
+        engine = _build_chatterbox(config)
         if engine is not None:
             return engine
         # Sin referencia no hay voz que clonar, pero quedarse mudo es peor que
@@ -120,7 +122,7 @@ def speak_language(config: Config) -> str:
     return config.get("tts.speak_language") or config.get("language", "es")
 
 
-def _build_xtts(config: Config):
+def _build_chatterbox(config: Config):
     from .paths import app_data_dir
 
     reference = Path(config.get("tts.reference") or app_data_dir() / "voices" / "reference.wav")
@@ -131,23 +133,18 @@ def _build_xtts(config: Config):
         )
         return None
     try:
-        from .tts.xtts_engine import XttsEngine
+        from .tts.chatterbox_engine import ChatterboxEngine
     except ImportError as exc:
         log.error("falta la dependencia de la voz clonada (%s); sigo con edge-tts. "
                   "Instálala con: npm run deps:voice", exc)
         return None
 
-    return XttsEngine(
+    return ChatterboxEngine(
         reference=reference,
         language=speak_language(config),
         device=config.get("tts.device", "auto"),
-        speed=float(config.get("tts.speed", 1.0)),
-        temperature=float(config.get("tts.temperature", 0.5)),
-        chunking=config.get("tts.chunking", "whole"),
-        model_path=config.get("tts.model_path") or None,
+        output_device=config.get("audio.output_device") or None,
     )
-
-
 class NovaApp:
     def __init__(self, config: Config):
         self.config = config

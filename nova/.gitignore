@@ -9,3 +9,4 @@ core/.venv/
 logs/
 *.log
 .DS_Store
+release/

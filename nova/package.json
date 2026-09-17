@@ -20,21 +20,76 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "mic:check": "node scripts/py.js -m nova.audio.check",
     "deps:core": "node scripts/py.js -m pip install -r requirements.txt",
-    "deps:voice": "node scripts/py.js -m pip install -r requirements-voice.txt",
+    "deps:voice": "node scripts/py.js -m pip install -r requirements-voice.txt && node scripts/py.js -m pip install --no-deps chatterbox-tts==0.1.7",
     "voice:build": "node scripts/py.js -m nova.tts.voice_profile",
-    "voice:train": "node scripts/py.js -m nova.tts.finetune",
     "setup:win": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
-    "setup": "bash scripts/setup.sh"
+    "setup": "bash scripts/setup.sh",
+    "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
     "@types/ws": "^8.18.0",
     "cross-env": "^7.0.3",
     "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.9.0"
   },
   "dependencies": {
     "dotenv": "^16.6.0",
     "ws": "^8.18.0"
+  },
+  "build": {
+    "appId": "com.nova.desktop",
+    "productName": "Nova",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "desktop/src/renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "core",
+        "to": "core",
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!**/__pycache__/**",
+          "!tests/**",
+          "!.pytest_cache/**",
+          "!**/*.pyc"
+        ]
+      },
+      {
+        "from": "scripts/instalar-nucleo.ps1",
+        "to": "scripts/instalar-nucleo.ps1"
+      },
+      {
+        "from": ".env.example",
+        "to": ".env.example"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Nova-Setup-${version}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Nova",
+      "language": "3082"
+    }
   }
 }

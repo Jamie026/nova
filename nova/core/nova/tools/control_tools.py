@@ -87,10 +87,19 @@ def _normalize_name(text: str) -> str:
 
 
 def title_matches_chat(title: str, chat: str) -> bool:
-    """¿El título nombra al chat que pedimos? Tolera apodos: basta una palabra."""
+    """¿El título nombra al chat que pedimos? Tolera apodos (basta una palabra)
+    y errores de OCR (el nombre suele venir de read_screen, que lee «l'mRyan»
+    donde pone «I'mRyan»): vale un parecido de 0,8 entre palabras."""
+    import difflib
+
     head = _normalize_name(title.split(" - ")[0]) if " - " in title else _normalize_name(title)
     wanted = [w for w in _normalize_name(chat).split() if len(w) >= 3]
-    return any(w in head for w in wanted) if wanted else False
+    if not wanted:
+        return False
+    if any(w in head for w in wanted):
+        return True
+    return any(difflib.SequenceMatcher(None, w, h).ratio() >= 0.8
+               for w in wanted for h in head.split() if len(h) >= 3)
 
 
 def input_enabled() -> bool:

@@ -1,48 +1,31 @@
 # Voz clonada (opcional). Instálalo con:  npm run deps:voice
 #
-# Son ~5 GB y sólo hacen falta si pones tts.provider = "xtts". Van aparte de
-# requirements.txt a propósito: quien sólo quiera el asistente con edge-tts no
-# tiene por qué descargarse PyTorch entero.
+# Son ~4 GB y sólo hacen falta si pones tts.provider = "chatterbox". Van aparte
+# de requirements.txt a propósito: quien sólo quiera el asistente con edge-tts
+# no tiene por qué descargarse PyTorch entero.
 #
 # El índice de pytorch.org es obligatorio en Windows: la rueda de torch que hay
-# en PyPI para Windows viene sin CUDA, y XTTS en CPU tarda más de diez segundos
-# por frase, o sea que no sirve para esto.
+# en PyPI para Windows viene sin CUDA, y la voz en CPU no sirve para esto.
 --index-url https://download.pytorch.org/whl/cu126
 --extra-index-url https://pypi.org/simple
 
-# El tope <2.9 no es pereza de no actualizar, es lo que evita arrastrar FFmpeg:
-# a partir de PyTorch 2.9, coqui-tts exige torchcodec para leer audio, y
-# torchcodec necesita las librerías compartidas de FFmpeg 4-7 instaladas en el
-# sistema (las que trae PyAV son de la 8 y con los nombres alterados, no le
-# valen). Con torch 2.8 esa rama ni se ejecuta y todo el proyecto sigue sin
-# depender de FFmpeg, que es como estaba pensado desde el principio.
-torch>=2.6,<2.9
-torchaudio>=2.6,<2.9
+# torch 2.8 y no 2.6 (que es lo que chatterbox-tts 0.1.7 declara): torch 2.6
+# trae cuDNN 9.1 y faster-whisper necesita una más nueva; con las dos en el
+# mismo proceso el núcleo moría al cargar la voz. torch 2.8 trae cuDNN 9.10 y
+# valen las mismas DLL para los dos (ver _prepare_cuda_libs). Chatterbox
+# funciona igual con 2.8 (medido: rtf 0,55 en una RTX 3050). Por eso
+# chatterbox-tts se instala aparte con --no-deps (ver deps:voice en
+# package.json) y sus dependencias van aquí a mano.
+torch==2.8.0
+torchaudio==2.8.0
 
-# Fork mantenido de Coqui TTS (la empresa cerró; el paquete "TTS" original está
-# abandonado y no instala en Python 3.13). Trae XTTS-v2, que clona una voz a
-# partir de unos segundos de referencia y habla español con el acento de esa voz.
-#
-# OJO CON LA LICENCIA: el modelo XTTS-v2 es CPML — uso personal y no comercial.
-# Vale para tu escritorio; no para distribuir la aplicación. Es la misma
-# situación que el retrato del avatar.
-#
-# Sin el extra [codec] a propósito: ese extra es justo torchcodec, y con
-# torch<2.9 no hace falta.
-coqui-tts>=0.27,<1
-
-# Tope obligatorio, y coqui-tts NO lo declara: transformers 5.0 eliminó
-# `isin_mps_friendly`, que es lo primero que importa la capa GPT de XTTS. Sin
-# este pin, pip instala la 5.x y el motor de voz ni siquiera se importa.
-transformers>=4.57,<5
-
-# Remuestreo con filtro anti-aliasing para preparar el audio de referencia
-# (nova/tts/voice_profile.py). Ya entra como dependencia de openwakeword, pero
-# aquí se usa directamente, así que se declara.
-scipy>=1.11,<2
-
-# Separar la voz de la música antes de entrenar (nova/tts/finetune.py). Los
-# vídeos de juego llevan banda sonora debajo de cada frase; entrenar con eso
-# enseña al modelo a poner música debajo. Demucs (htdemucs) deja un vocals.wav
-# limpio en unos segundos con la GPU. Reusa el torch de arriba, no trae otro.
-demucs>=4.0,<5
+# Lo que chatterbox-tts 0.1.7 necesita para hablar (sin gradio, que es su demo).
+conformer>=0.3
+diffusers>=0.29
+librosa>=0.10
+omegaconf>=2.3
+pyloudnorm>=0.1
+resemble-perth>=1.0
+s3tokenizer>=0.1
+safetensors>=0.5
+transformers>=4.46

@@ -67,42 +67,14 @@ def test_no_descarta_palabras_sueltas_que_si_se_dicen(texto):
     assert not is_hallucination(texto, audio_seconds=0.8)
 
 
-# --- reparto para sintetizador local -----------------------------------------
-from nova.tts.text import plan_chunks_streaming
-
-
-def test_streaming_el_primer_trozo_es_minusculo():
-    texto = ("Hi! I can open and close apps, search the web, manage files, take "
-             "screenshots, control volume and media, and type or click for you. "
-             "What do you need?")
-    chunks = plan_chunks_streaming(texto, first_max=40, growth=1.7, rest_max=180)
-    assert len(chunks[0]) <= 40
-    assert chunks[0].startswith("Hi!")
-    # Cada trozo cabe en el tiempo que suena el anterior: no crece más de 1,7x.
-    for antes, despues in zip(chunks, chunks[1:]):
-        assert len(despues) <= max(40, int(len(antes) * 1.7)) + 0
-    assert " ".join(chunks) == texto
-
-
-def test_streaming_no_pierde_texto_ni_con_frases_sin_puntuacion():
-    texto = "palabra " * 60
-    chunks = plan_chunks_streaming(texto.strip(), first_max=40, rest_max=100)
-    assert " ".join(chunks) == texto.strip()
-    assert all(len(c) <= 100 for c in chunks)
-    assert len(chunks[0]) <= 40
-
-
-def test_streaming_una_frase_corta_queda_entera():
-    assert plan_chunks_streaming("Done, I opened Discord.") == ["Done, I opened Discord."]
-
-
-def test_modo_entero_no_parte_una_respuesta_normal():
-    from nova.tts.xtts_engine import XttsEngine
-    motor = XttsEngine(reference="x.wav", language="en", chunking="whole")
+def test_una_respuesta_normal_es_un_solo_trozo():
+    from nova.tts.text import plan_pieces
     texto = "Done, I opened the browser with a new tab ready to search. Just tell me what to look for."
-    assert motor._plan(texto) == [texto]
-    # Sólo se parte cuando pasa del límite del modelo, y por frases.
+    assert plan_pieces(texto) == [texto]
+    # Se parte por oraciones en trozos de hasta 140 letras.
     largo = " ".join(f"Sentence number {i} is here." for i in range(20))
-    trozos = motor._plan(largo)
-    assert len(trozos) > 1 and all(len(t) <= 230 for t in trozos)
+    trozos = plan_pieces(largo)
+    assert len(trozos) > 1 and all(len(t) <= 140 for t in trozos)
     assert " ".join(trozos) == largo
+    # Pero nunca deja un trozo de menos de 40 letras: ésos son los que peor salen.
+    assert plan_pieces("Done. I opened Spotify and put on the playlist you asked for.") ==         ["Done. I opened Spotify and put on the playlist you asked for."]

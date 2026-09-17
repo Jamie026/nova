@@ -64,12 +64,36 @@ class ScreenReading:
             return "No se leyó ningún texto."
         left, top = self.origin
         width, height = self.size
-        out = [f"Ventana «{self.title}», {width}x{height}. Líneas leídas (n. x,y «texto»):"]
-        for line in self.lines[:limit]:
-            out.append(f"{line.index}. {line.x - left},{line.y - top} «{line.text}»")
+        shown = self.lines[:limit]
+        out = [f"Ventana «{self.title}», {width}x{height}. Líneas leídas (n. x,y «texto»), "
+               f"agrupadas por columnas de izquierda a derecha; una lista (chats, pestañas, "
+               f"resultados) son las líneas seguidas de una misma columna:"]
+        for k, column in enumerate(self.columns(shown), start=1):
+            xs = [l.x - left for l in column]
+            out.append(f"— columna {k} (x≈{min(xs)}–{max(xs)}) —")
+            for line in column:
+                out.append(f"{line.index}. {line.x - left},{line.y - top} «{line.text}»")
         if len(self.lines) > limit:
             out.append(f"… y {len(self.lines) - limit} líneas más.")
         return "\n".join(out)
+
+    @staticmethod
+    def columns(lines: list["ScreenLine"], gap: int = 80) -> list[list["ScreenLine"]]:
+        """Agrupa las líneas por su x: dos líneas están en la misma columna si
+        empiezan a menos de `gap` píxeles una de otra (encadenado). Sin esto,
+        el modelo leía la ventana de Discord como una sola lista y tomaba por
+        «primer chat» el nombre del autor de los mensajes del panel derecho
+        en vez de la primera entrada de la lista de la izquierda."""
+        ordered = sorted(lines, key=lambda l: l.x)
+        groups: list[list[ScreenLine]] = []
+        for line in ordered:
+            if groups and line.x - groups[-1][-1].x <= gap:
+                groups[-1].append(line)
+            else:
+                groups.append([line])
+        for group in groups:
+            group.sort(key=lambda l: (l.y, l.x))
+        return groups
 
 
 def available() -> bool:

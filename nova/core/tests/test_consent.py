@@ -54,7 +54,7 @@ class Tts:
 
 class Stt:
     def __init__(self, texto): self.texto = texto
-    async def transcribe(self, pcm, final=True):
+    async def transcribe(self, pcm, final=True, strict=True):
         from nova.stt.base import Transcript
         return Transcript(self.texto, final)
 

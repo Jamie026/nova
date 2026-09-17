@@ -23,6 +23,12 @@ class AdaptadorFalso:
     def type_text(self, t):
         self.acciones.append(("type", t)); return True
 
+    def get_clipboard(self):
+        return "lo que tenía el usuario"
+
+    def set_clipboard(self, t):
+        self.acciones.append(("clip", t)); return True
+
 
 OPERA = WindowInfo(handle=3, title="Acceso Rápido - Opera", process="opera.exe", foreground=True)
 DISCORD = WindowInfo(handle=7, title="@I'mRyan - Discord", process="Discord.exe")
@@ -50,8 +56,11 @@ async def test_abre_youtube_en_la_pestana_actual():
     # Lo que pidió el usuario: la URL en la pestaña que está mirando, no otra.
     ad = AdaptadorFalso([OPERA])
     await kb.KeyboardBrowser(ad).goto("youtube.com")
-    assert ad.acciones == [("focus", 3), ("keys", ("ctrl", "l")),
-                           ("type", "https://youtube.com"), ("keys", ("enter",))]
+    # Pegada, no tecleada (teclear perdía el principio si la ventana aún se
+    # estaba restaurando), y el portapapeles del usuario vuelve a su sitio.
+    assert ad.acciones == [("focus", 3), ("keys", ("ctrl", "l")), ("clip", "https://youtube.com"),
+                           ("keys", ("ctrl", "a")), ("keys", ("ctrl", "v")),
+                           ("clip", "lo que tenía el usuario"), ("keys", ("enter",))]
 
 
 @pytest.mark.asyncio
@@ -67,7 +76,7 @@ async def test_las_herramientas_usan_el_navegador_del_usuario_si_esta_abierto():
     tools = {t.name: t for t in browser_tools.build(browser=None, os_adapter=ad, mode="auto")}
     r = await tools["browser_goto"].handler(url="youtube.com")
     assert r.ok and "tu navegador" in r.summary
-    assert ("type", "https://youtube.com") in ad.acciones
+    assert ("clip", "https://youtube.com") in ad.acciones
 
 
 @pytest.mark.asyncio
@@ -77,3 +86,32 @@ async def test_lo_que_necesita_cdp_lo_dice_y_apunta_a_read_screen():
     r = await tools["browser_read_page"].handler()
     assert not r.ok and "read_screen" in r.summary
     assert ad.acciones == []
+
+
+def test_encuentra_opera_aunque_el_titulo_no_lleve_firma_o_este_minimizada():
+    # Opera GX titula la ventana sólo con la página; y minimizada sigue valiendo.
+    sin_firma = WindowInfo(handle=9, title="Comprar cuentas Zenless Zone Zero | Venta", process="opera.exe", minimized=True)
+    assert kb.find_browser_window(AdaptadorFalso([DISCORD, sin_firma])).handle == 9
+    # Pero una visible gana a una minimizada.
+    visible = WindowInfo(handle=10, title="YouTube", process="opera.exe")
+    assert kb.find_browser_window(AdaptadorFalso([sin_firma, visible])).handle == 10
+
+
+async def test_sin_navegador_lanza_el_preferido_en_vez_de_chrome():
+    class Lanzador(AdaptadorFalso):
+        def __init__(self):
+            super().__init__([DISCORD]); self.lanzado = None
+        def find_app(self, q):
+            return q if q == "Opera GX" else None
+        def open_app(self, app):
+            self.lanzado = app; self.ventanas = [DISCORD, OPERA]; return True
+
+    ad = Lanzador()
+    b = kb.KeyboardBrowser(ad, prefer="opera")
+    assert (await b.ensure()).title.endswith("Opera")
+    assert ad.lanzado == "Opera GX"
+
+
+async def test_sin_preferido_no_lanza_nada():
+    ad = AdaptadorFalso([DISCORD])
+    assert await kb.KeyboardBrowser(ad, prefer="").ensure() is None

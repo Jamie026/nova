@@ -39,6 +39,7 @@ log = logging.getLogger("nova.stt")
 # Serializar sólo la construcción cuesta un par de segundos al arrancar y no
 # afecta a la latencia de uso: cargar es lo único que se solapa.
 MODEL_LOAD_LOCK = threading.Lock()
+JUDGE_MODEL = "base"
 
 _CUDA_READY = False
 # Hay que quedarse con dos cosas o el arreglo se deshace solo:
@@ -62,6 +63,25 @@ _CUDA_DLL_HANDLES: list = []
 _CUDA_PRELOAD = ("cublasLt64_12.dll", "cublas64_12.dll", "cudnn64_9.dll")
 
 
+def _preload_candidates(name: str) -> list[Path]:
+    """Dónde buscar una DLL de CUDA, por orden: torch/lib, luego los paquetes pip."""
+    found: list[Path] = []
+    try:
+        import torch  # type: ignore
+        found.append(Path(torch.__file__).parent / "lib" / name)
+    except Exception:
+        pass
+    if found and found[0].exists():
+        return found          # con torch, sólo torch
+    try:
+        import nvidia  # type: ignore
+        for base in nvidia.__path__:
+            found += sorted(Path(base).glob(f"*/bin/{name}"))
+    except Exception:
+        pass
+    return found
+
+
 def _prepare_cuda_libs() -> bool:
     """Deja utilizables las DLL de CUDA que instala pip. Devuelve si lo consiguió.
 
@@ -77,12 +97,32 @@ def _prepare_cuda_libs() -> bool:
     if _CUDA_READY:
         return True
 
+    # Si hay PyTorch (la voz clonada), sus DLL van PRIMERO: torch trae cuBLAS y
+    # cuDNN que casan entre sí (2.6+cu124 → cuDNN 9.1), y los paquetes pip de
+    # NVIDIA traen otras versiones (cuDNN 9.26). Windows carga cada DLL por
+    # nombre una sola vez, así que si se precarga la de pip, torch se encuentra
+    # después con una cuDNN que no es la suya y el núcleo moría en silencio al
+    # cargar la voz («Could not load symbol cudnnGetLibConfig»). Con la de
+    # torch primero, CTranslate2 y torch usan la misma.
+    torch_lib = None
+    try:
+        import torch  # type: ignore
+        candidate = Path(torch.__file__).parent / "lib"
+        if (candidate / "cudnn64_9.dll").exists() and (candidate / "cublas64_12.dll").exists():
+            torch_lib = candidate
+            _CUDA_DLL_COOKIES.append(os.add_dll_directory(str(torch_lib)))
+    except Exception:
+        pass
+
     try:
         import nvidia  # type: ignore
     except ImportError:
         nvidia = None  # el usuario puede tener CUDA instalado a mano, en el PATH
 
-    if nvidia is not None:
+    # Con torch, la carpeta de pip NO se registra: cudnn64_9.dll carga sus
+    # sub-DLL (cudnn_graph, cudnn_ops…) por nombre, y si las dos carpetas están
+    # registradas Windows puede servirle las de la otra versión.
+    if nvidia is not None and torch_lib is None:
         for base in nvidia.__path__:
             for sub in sorted(Path(base).glob("*/bin")):
                 if sub.is_dir():
@@ -95,7 +135,10 @@ def _prepare_cuda_libs() -> bool:
 
     for name in _CUDA_PRELOAD:
         try:
-            _CUDA_DLL_HANDLES.append(ctypes.WinDLL(name))
+            # Con ruta completa si hay torch: la búsqueda por nombre no respeta
+            # el orden de los directorios añadidos.
+            candidate = next((c for c in _preload_candidates(name) if c.exists()), None)
+            _CUDA_DLL_HANDLES.append(ctypes.WinDLL(str(candidate) if candidate else name))
         except OSError:
             # cuBLAS es imprescindible; cuDNN puede faltar en instalaciones
             # antiguas y CTranslate2 aún arranca para algunos modelos.
@@ -192,6 +235,11 @@ class FasterWhisperStt:
             self._model_name = self._cpu_model
         self._model = None
         self._lock = asyncio.Lock()
+        # El juez de la voz (ver check_speech): un modelo aparte y pequeño,
+        # con su propio cerrojo, para que comprobar lo que dice Nova no
+        # bloquee ni retrase escuchar al usuario.
+        self._judge = None
+        self._judge_lock = asyncio.Lock()
 
     def _load_model(self, device: str, compute_type: str):
         from faster_whisper import WhisperModel
@@ -229,8 +277,23 @@ class FasterWhisperStt:
             self._model_name = self._cpu_model
             self._model = await asyncio.to_thread(self._load_model, "cpu", "int8")
         log.info("whisper listo: %s en %s", self._model_name, self._device)
+        try:
+            self._judge = await asyncio.to_thread(self._load_judge)
+        except Exception as exc:
+            log.warning("sin juez de voz (%s); las frases no se comprobarán", exc)
 
-    async def transcribe(self, pcm16: bytes, final: bool = True) -> Transcript:
+    def _load_judge(self):
+        from faster_whisper import WhisperModel
+
+        with MODEL_LOAD_LOCK:
+            model = WhisperModel(JUDGE_MODEL, device=self._device,
+                                 compute_type="int8_float16" if self._device != "cpu" else "int8")
+        list(model.transcribe(np.zeros(16000, dtype=np.float32), language="en", beam_size=1,
+                              vad_filter=False)[0])
+        return model
+
+    async def transcribe(self, pcm16: bytes, final: bool = True,
+                         strict: bool = True) -> Transcript:
         if self._model is None:
             await self.warmup()
         audio = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
@@ -270,10 +333,35 @@ class FasterWhisperStt:
                 log.info("el filtro de silencio dejó la frase vacía; reintento sin él")
                 text = await asyncio.to_thread(_run, False)
 
-        if final and text and is_hallucination(text, audio_seconds=seconds):
+        if strict and final and text and is_hallucination(text, audio_seconds=seconds):
             log.info("descarto transcripción inventada (%.1f s de audio): %r", seconds, text)
             return Transcript("", final, self._language)
         return Transcript(text, final, self._language)
+
+    async def check_speech(self, pcm16: bytes, language: str) -> str:
+        """Qué se oye en un audio que NO es del usuario: lo que acaba de
+        sintetizar la voz. Sin filtro de silencio, sin vocabulario de
+        aplicaciones y sin filtro de alucinaciones: aquí se quiere el texto
+        crudo para compararlo con el que se pidió. Ver ChatterboxEngine.verifier.
+
+        Lo hace un Whisper `base`, no el medium del usuario: como juez es
+        igual de bueno (medido sobre 24 tomas: parecido medio 0,924 frente a
+        0,926, mismas 2 rechazadas) y tarda 280 ms en vez de 1080."""
+        if self._model is None:
+            await self.warmup()
+        audio = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
+        if audio.size < 1600:
+            return ""
+        model, lock = (self._judge, self._judge_lock) if self._judge is not None else (self._model, self._lock)
+
+        def _run() -> str:
+            segments, _ = model.transcribe(
+                audio, language=language, beam_size=1, vad_filter=False,
+                condition_on_previous_text=False, temperature=0.0)
+            return " ".join(s.text.strip() for s in segments).strip()
+
+        async with lock:
+            return await asyncio.to_thread(_run)
 
     async def close(self) -> None:
         self._model = None

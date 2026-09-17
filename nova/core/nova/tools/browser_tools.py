@@ -28,18 +28,22 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
     usuario; "cdp" siempre Chrome propio."""
     keyboard = KeyboardBrowser(os_adapter, prefer) if os_adapter is not None else None
 
-    def _use_keyboard() -> bool:
+    async def _use_keyboard() -> bool:
         if keyboard is None or mode == "cdp":
             return False
         if mode == "keyboard":
             return True
-        return keyboard.window() is not None
+        if keyboard.window() is not None:
+            return True
+        # Sin navegador abierto: si hay uno preferido, se lanza ése. Sólo si
+        # no hay preferido (o no arranca) se cae al Chrome propio por CDP.
+        return prefer != "" and await keyboard.ensure() is not None
 
     def _cdp_only() -> ToolResult:
         return ToolResult(False, _CDP_ONLY_HINT)
 
     async def browser_open() -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             window = keyboard.window()
             return ToolResult(True, f"Uso el navegador que ya tienes abierto: {window.title}",
                               {"mode": "keyboard", "window": window.title})
@@ -48,21 +52,21 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
         return ToolResult(True, f"Navegador listo. {_tabs_summary(tabs)}", {"tabs": len(tabs)})
 
     async def browser_search(query: str, new_tab: bool = False) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             page = await keyboard.search(query, new_tab=new_tab)
             return ToolResult(True, f"Busqué «{query}» en tu navegador. Página actual: {page.title}")
         tab = await browser.search(query, new_tab=new_tab)
         return ToolResult(True, f"Busqué «{query}». Página actual: {tab.title}", {"url": tab.url})
 
     async def browser_goto(url: str) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             page = await keyboard.goto(url)
             return ToolResult(True, f"Abrí {url} en la pestaña actual de tu navegador ({page.title})")
         tab = await browser.goto(url)
         return ToolResult(True, f"Abrí {tab.title} ({tab.url})", {"url": tab.url})
 
     async def browser_new_tab(url: str = "") -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             if not url:
                 page = await keyboard.goto("about:blank", new_tab=True)
             else:
@@ -72,7 +76,7 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
         return ToolResult(True, f"Pestaña nueva: {tab.title or 'en blanco'}", {"url": tab.url})
 
     async def browser_close_tab(index: int | None = None) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             if index is not None:
                 return ToolResult(False, "En tu navegador sólo puedo cerrar la pestaña activa (Ctrl+W); "
                                          "cambia a ella primero.")
@@ -83,7 +87,7 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
         return ToolResult(ok, "Pestaña cerrada" if ok else "Esa pestaña no existe")
 
     async def browser_switch_tab(index: int | None = None, match: str = "") -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             page = await keyboard.next_tab()
             return ToolResult(True, f"Pasé a la siguiente pestaña: {page.title}")
         tab = await browser.switch_tab(None if index is None else index - 1, match or None)
@@ -92,40 +96,40 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
         return ToolResult(True, f"Cambié a «{tab.title}»", {"url": tab.url})
 
     async def browser_list_tabs() -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         tabs = await browser.list_tabs()
         data = [{"index": t.index + 1, "title": t.title, "url": t.url, "active": t.active} for t in tabs]
         return ToolResult(True, _tabs_summary(tabs), {"tabs": data})
 
     async def browser_click(text: str) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         return ToolResult(True, await browser.click(text))
 
     async def browser_open_result(position: int) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         return ToolResult(True, await browser.click_result(position))
 
     async def browser_type(text: str, into: str = "", submit: bool = False) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         return ToolResult(True, await browser.type_text(text, into or None, submit))
 
     async def browser_read_page() -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         content = await browser.read_page()
         return ToolResult(True, content or "La página no tiene texto legible", {"text": content})
 
     async def browser_find_in_page(text: str) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             return _cdp_only()
         return ToolResult(True, await browser.find_in_page(text))
 
     async def browser_scroll(direction: str = "down", amount: int = 600) -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             await keyboard._focus()
             os_adapter.press_keys(["pagedown" if direction == "down" else "pageup"])
             return ToolResult(True, f"Desplacé la página hacia {'abajo' if direction == 'down' else 'arriba'}")
@@ -133,7 +137,7 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
         return ToolResult(ok, f"Desplacé la página hacia {'abajo' if direction == 'down' else 'arriba'}")
 
     async def browser_go_back() -> ToolResult:
-        if _use_keyboard():
+        if await _use_keyboard():
             page = await keyboard.go_back()
             return ToolResult(True, f"Volví atrás. Ahora: {page.title}")
         ok = await browser.go_back()

@@ -52,6 +52,8 @@ KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 0x0001, 0x0002, 0x00
 MOUSEEVENTF = {
     "left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040),
 }
+MOUSEEVENTF_WHEEL, MOUSEEVENTF_HWHEEL = 0x0800, 0x1000
+WHEEL_DELTA = 120   # una muesca de la rueda
 
 ULONG_PTR = wintypes.WPARAM
 
@@ -494,6 +496,31 @@ class WindowsAdapter:
                 _Input(type=INPUT_MOUSE, value=_InputUnion(mi=_MouseInput(0, 0, 0, up, 0, 0))),
             ]
         return self._send(events)
+
+    def scroll(self, x: int, y: int, clicks: int, horizontal: bool = False) -> bool:
+        """Rueda del ratón sobre el punto (x, y): `clicks` muescas, positivas
+        hacia arriba (o a la derecha si es horizontal), negativas hacia abajo.
+
+        La rueda va a la ventana que hay bajo el cursor, no a la enfocada, así
+        que primero se mueve el cursor. Se manda una muesca por evento y no una
+        sola con el total: el navegador respeta la magnitud, pero hay programas
+        (juegos, apps Electron viejas) que cuentan eventos y no unidades.
+        """
+        if clicks == 0:
+            return True
+        if not user32.SetCursorPos(int(x), int(y)):
+            return False
+        time.sleep(0.02)
+        flag = MOUSEEVENTF_HWHEEL if horizontal else MOUSEEVENTF_WHEEL
+        step = WHEEL_DELTA if clicks > 0 else -WHEEL_DELTA
+        # mouseData es un DWORD: el delta negativo va en complemento a dos.
+        data = step & 0xFFFFFFFF
+        for _ in range(abs(int(clicks))):
+            event = _Input(type=INPUT_MOUSE, value=_InputUnion(mi=_MouseInput(0, 0, data, flag, 0, 0)))
+            if not self._send([event]):
+                return False
+            time.sleep(0.015)
+        return True
 
     def screen_size(self) -> tuple[int, int]:
         SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79

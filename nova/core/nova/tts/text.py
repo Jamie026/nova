@@ -16,13 +16,32 @@ def split_sentences(text: str, max_chars: int = 220) -> list[str]:
     for chunk in _SENTENCE_SPLIT.split(text.strip()):
         chunk = chunk.strip()
         while len(chunk) > max_chars:
-            cut = chunk.rfind(" ", 0, max_chars)
-            cut = cut if cut > 40 else max_chars
+            # En partes parecidas, no «todo lo que quepa y un resto»: un
+            # resto de tres palabras es justo lo que peor sintetiza el
+            # modelo. Se corta por la coma más cercana al medio, o por un
+            # espacio.
+            n = -(-len(chunk) // max_chars)
+            cut = _best_cut(chunk, len(chunk) // n, max_chars)
             parts.append(chunk[:cut].strip())
             chunk = chunk[cut:].strip()
         if chunk:
             parts.append(chunk)
     return parts
+
+
+def _best_cut(chunk: str, target: int, max_chars: int) -> int:
+    """Índice de corte cerca de `target`: la coma más cercana dentro de ±40 %,
+    si no el espacio más cercano, si no el último espacio antes del máximo."""
+    lo, hi = max(1, int(target * 0.6)), min(len(chunk) - 1, int(target * 1.4), max_chars)
+    commas = [i + 1 for i in range(lo, hi) if chunk[i] in ",;"]
+    if commas:
+        return min(commas, key=lambda i: abs(i - target))
+    spaces = [i for i in range(lo, hi) if chunk[i] == " "]
+    if spaces:
+        return min(spaces, key=lambda i: abs(i - target))
+    cut = chunk.rfind(" ", 0, max_chars)
+    return cut if cut > 40 else max_chars
+
 
 
 def plan_chunks(text: str, first_max: int = 110, rest_max: int = 320) -> list[str]:
@@ -70,77 +89,31 @@ def plan_chunks(text: str, first_max: int = 110, rest_max: int = 320) -> list[st
 _CLAUSE_SPLIT = re.compile(r"(?<=[\.\!\?\:;…,—–])\s+|\n+")
 
 
-def plan_chunks_streaming(text: str, first_max: int = 40, growth: float = 1.7,
-                          rest_max: int = 180) -> list[str]:
-    """Reparto para un sintetizador local, donde el coste crece con el texto.
+def plan_pieces(text: str, max_chars: int = 140, min_chars: int = 40,
+                first_max: int | None = None, growth: float = 0.0) -> list[str]:
+    """Trozos por oraciones para sintetizar cada uno de una pasada.
 
-    Con edge-tts el tamaño del trozo apenas importa: casi todo el tiempo es abrir
-    la conexión, así que compensa hacer trozos grandes y pocos. Con XTTS es al
-    revés: no hay conexión, y sintetizar tarda algo más de la mitad de lo que
-    dura el audio. Medido: 23 caracteres tardan 1,9 s en sonar; 131 tardan 5,3.
-    Un primer trozo largo es exactamente lo que hace que Nova «tarde en
-    responder».
-
-    Así que el primer trozo es minúsculo —la primera cláusula, «Hi!» o «Listo,»—
-    para que suene casi al instante, y cada trozo siguiente puede ser hasta
-    `growth` veces más largo que el anterior. Ese factor no es estético: mientras
-    suena el trozo N se sintetiza el N+1, y con un coste de ~0,6 s por segundo de
-    audio, el siguiente cabe sin hueco si no pasa de ~1,6 veces el anterior. Con
-    1,7 se medían huecos de 0,3-0,7 s entre los trozos largos; con 1,5 el primer
-    audio llega igual de rápido y el resto encadena sin costura.
-
-    Se corta también por comas y no sólo por puntos, porque una frase de 130
-    caracteres sin un punto dentro es de lo más normal en una respuesta.
-    """
-    clauses = [c.strip() for c in _CLAUSE_SPLIT.split(text.strip()) if c.strip()]
-    if not clauses:
-        return []
-
-    def next_limit(done: str) -> int:
-        return min(rest_max, max(first_max, int(len(done) * growth)))
-
-    chunks: list[str] = []
+    `first_max` acota la primera pieza (es lo que se espera entero antes de
+    oír nada) y `growth` deja que cada pieza sea como mucho ese factor más
+    larga que la anterior: con la voz a rtf ~0,6, una pieza se genera en
+    ~0,6 veces su duración más 0,3 s, así que si la siguiente no crece más
+    de 1,5x, siempre está lista antes de que termine la anterior y la
+    tubería no espera. Nunca cierra un trozo de menos de `min_chars`: las
+    frases muy cortas son las que peor salen, así que se le pega la
+    siguiente oración aunque se pase del límite."""
+    sentences = split_sentences(text, max_chars=first_max or max_chars)
+    pieces: list[str] = []
     current = ""
-    limit = first_max
-    for clause in clauses:
-        while clause:
-            candidate = f"{current} {clause}".strip() if current else clause
-            if len(candidate) <= limit:
-                current, clause = candidate, ""
-            elif current:
-                # No cabe junto a lo acumulado: se cierra el trozo y se reintenta
-                # la cláusula sola con el límite siguiente.
-                chunks.append(current)
-                limit, current = next_limit(current), ""
-            else:
-                # La cláusula sola supera el límite: se parte por el último
-                # espacio que quepa. Mejor una costura dentro de una frase
-                # larguísima que esperar cinco segundos a que se sintetice entera.
-                cut = clause.rfind(" ", 0, limit)
-                cut = cut if cut > 20 else limit
-                chunks.append(clause[:cut].strip())
-                limit, clause = next_limit(chunks[-1]), clause[cut:].strip()
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def plan_whole(text: str, max_chars: int = 230) -> list[str]:
-    """Todo junto, partido por frases sólo cuando no cabe en una llamada.
-
-    Es el reparto que conserva la voz: XTTS fija el timbre con el contexto de
-    la frase entera, y cada corte es una ocasión para que se le vaya. Sólo se
-    corta cuando el texto pasa del límite del modelo, y siempre por frases.
-    """
-    chunks: list[str] = []
-    current = ""
-    for sentence in split_sentences(text, max_chars=max_chars):
+    limit = first_max or max_chars
+    for sentence in sentences:
         candidate = f"{current} {sentence}".strip() if current else sentence
-        if current and len(candidate) > max_chars:
-            chunks.append(current)
+        if current and len(candidate) > limit and len(current) >= min_chars:
+            pieces.append(current)
             current = sentence
+            limit = min(max_chars, int(len(pieces[-1]) * growth)) if growth else max_chars
+            limit = max(limit, min_chars)
         else:
             current = candidate
     if current:
-        chunks.append(current)
-    return chunks
+        pieces.append(current)
+    return pieces

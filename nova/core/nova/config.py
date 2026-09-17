@@ -122,9 +122,10 @@ DEFAULTS: dict[str, Any] = {
         "request_timeout_s": 60,
     },
     "tts": {
-        # "edge"  voces neuronales de Microsoft; necesita red, ~1,3 s por respuesta
-        # "xtts"  voz clonada en local sobre la GPU a partir de tts.reference
-        # "mock"  sin audio
+        # "edge"        voces neuronales de Microsoft; necesita red, ~1,3 s por respuesta
+        # "chatterbox"  voz clonada en local sobre la GPU (Chatterbox Turbo, MIT)
+        #               a partir de tts.reference. Sólo inglés: con speak_language "en".
+        # "mock"        sin audio
         "provider": "edge",
         "voice": "es-PE-CamilaNeural",
         "rate": "+8%",
@@ -132,40 +133,23 @@ DEFAULTS: dict[str, Any] = {
         # Idioma de lo que se DICE, cuando debe ser distinto del de la pantalla.
         # Vacío = el mismo que `language`. Con "en", el modelo devuelve las dos
         # versiones en una sola respuesta: se oye inglés y se lee español.
-        #
-        # No es un capricho: clonar una voz inglesa hablando inglés sale mucho
-        # mejor que haciéndola hablar español. Medido con la misma referencia
-        # sobre doce frases, comparando cada síntesis con su transcripción:
-        # inglés 0,90 de fidelidad y 1 fallo; español 0,79 y 7 fallos.
         "speak_language": "",
-        # --- sólo para "xtts" ---
-        # WAV de referencia del que se copia timbre, acento y entonación. Vacío =
+        # --- sólo para "chatterbox" ---
+        # WAV de referencia del que se copia el timbre. Vacío =
         # %APPDATA%/Nova/voices/reference.wav, que es donde lo deja
-        # `npm run voice:build <carpeta con audios>`.
+        # `npm run voice:build <carpeta con audios>`. El modelo usa SÓLO los
+        # primeros 10 s (6 s para el timbre): que empiece por lo mejor.
         "reference": "",
-        "device": "auto",              # auto|cpu|cuda — en CPU es inviable (>10 s)
-        "speed": 1.0,
-        # Medido sobre 12 frases: a 0,50 la fidelidad de lo que dice sube a 0,91
-        # y a 0,65 baja a 0,80. Más temperatura da más variedad de entonación,
-        # pero también más frases arrastradas.
-        "temperature": 0.5,
-        # "whole": la respuesta entera en una sola pasada del modelo. Es como
-        #          se hicieron las muestras y es la voz que se aprobó (parecido
-        #          0,66 frente a 0,54 troceada). El audio sale en streaming de
-        #          esa misma pasada, así que empieza a sonar a los ~0,4 s.
-        # "streaming": el modo antiguo, partiendo el TEXTO en fragmentos. Ya no
-        #          es más rápido y la voz pierde consistencia entre trozos.
-        "chunking": "whole",
-        # Carpeta con un XTTS ajustado a esta voz (lo deja `npm run voice:train`).
-        # Vacío = XTTS-v2 de serie. OJO: con 3,4 min de audio real, medido, el
-        # ajustado no superó al zero-shot (0,57 de parecido frente a 0,59) y las
-        # variantes que tocan el GPT se entienden peor. Compáralo antes de activarlo.
-        "model_path": "",
+        "device": "auto",              # auto|cpu|cuda — en CPU es inviable
     },
     "session": {
         "greeting": "Te escucho.",
         "speak_greeting": False,       # earcon por defecto; la voz añade ~600 ms
         "follow_up_seconds": 12,       # conversación continua sin repetir wake word
+        # Lo que dice al oír «descansa» (o «eso es todo», «hasta luego»): se
+        # calla, dice esto y se duerme sin pasar por el modelo. En el idioma
+        # de la voz; vacío = se duerme sin decir nada.
+        "farewell": "Okay, resting.",
         "barge_in": True,
         # Interrumpir a Nova mientras habla exige más que la escucha normal, porque
         # el micrófono oye los altavoces y Nova se interrumpía a sí misma. Voz

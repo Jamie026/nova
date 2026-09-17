@@ -214,15 +214,45 @@ Otros comandos disponibles:
                          dice con números qué falló: el nivel, la palabra
                          activadora o la transcripción.
     npm run deps:core    Reinstala las dependencias de Python en core\\.venv.
-    npm run deps:voice   Instala la voz clonada (PyTorch + XTTS). Ver §7.
+    npm run deps:voice   Instala la voz clonada (PyTorch + Chatterbox). Ver §7.
     npm run voice:build  Prepara el audio de referencia de la voz. Ver §7.
     npm run typecheck    Revisa el TypeScript sin compilar.
     npm run build        Compila el TypeScript.
+    npm run dist         Genera el instalador .exe en release. Ver §4.1.
 
 Una sola orden, sin interfaz ni micrófono (la forma más rápida de probar):
 
     cd core
     .\\.venv\\Scripts\\python.exe -m nova.main --text "abre spotify"
+
+4.1 GENERAR EL INSTALADOR (.exe)
+
+    npm run dist
+
+    Deja release\Nova-Setup-0.1.0.exe (77 MB): un instalador normal de
+    Windows, por usuario (no pide administrador), que instala en
+    %LOCALAPPDATA%\Programs\Nova y crea acceso directo. Dentro va la
+    interfaz y el código del núcleo, pero NO el entorno de Python: son 5 GB
+    con PyTorch y un venv de Windows no se puede copiar de una máquina a
+    otra. Por eso, la primera vez que se abre Nova instalada:
+
+      1. Pregunta si quieres la voz clonada (Chatterbox, ~4 GB más) o no (edge-tts).
+      2. Abre una ventana de PowerShell que crea el venv e instala todo dentro
+         de la carpeta de Nova. Hace falta Python 3.13 en el PATH e internet.
+         Tarda unos minutos.
+      3. Crea %APPDATA%\Nova\.env a partir de .env.example y lo abre en el
+         Bloc de notas para que pongas la DEEPSEEK_API_KEY.
+      4. Al cerrar esa ventana, Nova arranca sola. Las siguientes veces abre
+         directamente.
+
+    Instalada, el .env se lee de %APPDATA%\Nova\.env (no de la carpeta del
+    programa). Ajustes, memoria, voces y logs siguen en %APPDATA%\Nova.
+    Si la instalación del núcleo falla, se puede repetir a mano:
+        %LOCALAPPDATA%\Programs\Nova\resources\scripts\instalar-nucleo.ps1 -Voz
+
+    El .exe no va firmado: Windows SmartScreen avisará la primera vez
+    ("Más información → Ejecutar de todas formas"). Firmarlo cuesta un
+    certificado; para uso propio no hace falta.
 
 
 ================================================================================
@@ -234,6 +264,23 @@ derecha mientras te escucha y desaparece solo cuando termina.
 
 Después de responder sigue escuchando unos 12 segundos por si continúas, así que
 no tienes que repetir "Nova" en cada frase de la misma conversación.
+
+DOS ÓRDENES QUE OBEDECE AL INSTANTE (sin pasar por el modelo)
+
+    "descansa"   (también "eso es todo", "hasta luego", "adiós", "nada más")
+        Se calla si estaba hablando, dice "Okay, resting." y se duerme. Ya no
+        sigue escuchando 12 segundos: hay que volver a decir la palabra
+        activadora. Lo que dice al despedirse se cambia en settings.json:
+        "session": { "farewell": "Okay, resting." }  (vacío = se duerme muda).
+
+    "para"       (también "detente", "cancela", "cállate", "stop")
+        Corta lo que esté diciendo O HACIENDO —una cadena de herramientas a
+        medias se queda a medias— y vuelve a escuchar por si le das otra orden.
+
+    Las dos valen en cualquier momento: mientras habla, mientras piensa y
+    mientras ejecuta. Mientras piensa o ejecuta, el micrófono SÓLO reacciona a
+    estas dos; si hablas de otra cosa con alguien, la tarea sigue (y el log lo
+    anota como "oído mientras trabajaba (ignorado)").
 
 ATAJOS DE TECLADO
 
@@ -264,6 +311,8 @@ EJEMPLOS DE ÓRDENES QUE ENTIENDE
     "Nova, toma una captura de la ventana de Discord"
     "Nova, busca la imagen corin y pégala en Discord"
     "Nova, lee lo que dice esta página"
+    "Nova, baja en Discord y dime qué chats hay"     (hace scroll y vuelve a leer)
+    "Nova, sube un poco en Opera"
 
 Para el último tipo de orden — las que tocan archivos y otras aplicaciones —
 Nova te va a pedir confirmación. Lee lo que dice el cuadro antes de aceptar: te
@@ -319,171 +368,52 @@ funciona en Discord, Slack y Telegram; en otras apps Nova te dirá que no sabe.
 7. LA VOZ CLONADA (opcional)
 ================================================================================
 
-Por defecto Nova habla con una voz neuronal de Microsoft (edge-tts): suena bien,
-no ocupa nada y necesita conexión. Si en vez de eso quieres que hable con *una voz
-concreta* —la de un personaje, la tuya, la que sea—, Nova puede clonarla en local
-con XTTS-v2. No entrena nada: le das unos segundos de esa voz y copia timbre,
-acento y entonación.
+Nova puede hablar con una voz clonada de unos segundos de audio, en local, sobre
+la GPU. El modelo es Chatterbox Turbo (Resemble AI, licencia MIT). Sólo habla
+inglés: por eso la voz va en inglés y los subtítulos en español (§3).
 
-    LO MÁS IMPORTANTE DE ESTA SECCIÓN: si la voz de referencia es inglesa,
-    deja que Nova HABLE en inglés y muestre los subtítulos en español.
+7.1 INSTALAR
 
-Hacer que una voz inglesa clonada hable español se puede, pero sale bastante peor,
-y no es opinión. Con la misma referencia, sintetizando doce frases y comparando
-cada una con su transcripción automática:
+    npm run deps:voice
 
-    hablando inglés    fidelidad 0,90    1 frase mala de 12
-    hablando español   fidelidad 0,79    7 frases malas de 12
+    Baja PyTorch con CUDA y Chatterbox (~4 GB). La primera vez que arranque con
+    la voz activada descarga el modelo (~1 GB) y tarda un minuto más.
 
-Por eso Nova sabe separar las dos cosas: el modelo devuelve la respuesta en los
-dos idiomas de una sola vez, se dice la inglesa y se lee la española. No cuesta
-ni una llamada extra al modelo ni un segundo más de espera.
+7.2 LA REFERENCIA
 
-7.1 QUÉ HACE FALTA
+    npm run voice:build -- "C:\ruta\a\los\audios"
 
-    - Una GPU NVIDIA. En CPU tarda más de diez segundos por frase, o sea que no
-      sirve para un asistente.
-    - Unos 5 GB más de disco (PyTorch y el modelo).
-    - Entre 6 y 20 segundos de voz limpia. No hacen falta horas: es clonado
-      zero-shot, no entrenamiento.
+    Junta los audios de la carpeta (ogg, mp3, wav…) en
+    %APPDATA%\Nova\voices\reference.wav. El modelo usa SÓLO los primeros 10
+    segundos (6 para el timbre), así que lo que importa es que empiece por el
+    mejor audio: voz limpia, sin música, sin susurros, hablando con
+    naturalidad. Un clip de 10-15 s de diálogo tranquilo vale más que un
+    minuto de líneas de combate.
 
-7.2 INSTALACIÓN
+7.3 ACTIVAR
 
-        npm run deps:voice
-
-    Baja PyTorch con CUDA y coqui-tts. Tarda un rato largo la primera vez.
-
-7.3 PREPARAR LA VOZ DE REFERENCIA
-
-    Mete los audios en una carpeta (.ogg, .wav, .mp3, .flac, .m4a, .opus) y:
-
-        npm run voice:build -- "C:\\ruta\\a\\tus\\audios"
-
-    El guion doble antes de la ruta es de npm, no de Nova: sin él, npm se queda
-    el argumento.
-
-    Esto elige los mejores clips, les quita el silencio, los iguala de volumen y
-    escribe %APPDATA%\\Nova\\voices\\reference.wav. Te dice cuáles entraron.
-
-    Elige por duración de mayor a menor, y hay un motivo: en material de
-    videojuego los gritos de combate son cortos y el diálogo tranquilo es largo,
-    así que ordenar por duración separa uno de otro sin etiquetar nada. Si aun
-    así se cuela algún grito, descártalo por nombre:
-
-        npm run voice:build -- "C:\\ruta" --excluir Attack Dodge Encounter
-
-    Esto es lo que más decide el resultado. Un clip gritando en la referencia
-    hace que Nova te conteste la hora a gritos.
-
-7.4 ACTIVARLA
-
-    En el .env, las dos líneas:
-
-        NOVA_TTS_PROVIDER=xtts
+    En .env:
+        NOVA_TTS_PROVIDER=chatterbox
         NOVA_TTS_SPEAK_LANG=en
 
-    La primera cambia el motor de voz. La segunda dice en qué idioma HABLA; los
-    subtítulos siguen en el idioma de `language` (español). Si quitas la segunda,
-    Nova hablará español con la voz clonada y se le notará bastante.
+7.4 QUÉ ESPERAR
 
-    O en %APPDATA%\\Nova\\settings.json:
-        "tts": { "provider": "xtts", "speak_language": "en" }
+    Medido en una RTX 3050 de portátil: la voz tarda ~0,55 s por cada segundo
+    de audio. Una respuesta de 3,5 s empieza a sonar a los ~2 s; las
+    respuestas largas se parten por oraciones (la primera corta) y cada
+    oración se genera mientras suena la anterior, sin huecos. Frente a XTTS,
+    que se usó antes: se parece un poco menos a la referencia (0,61 frente a
+    0,64, medido con un codificador de hablante independiente) pero no
+    produce basura: 0 tomas malas de 36 contra 5-7, ninguna se desboca y no
+    hace falta repetir frases. Las frases de menos de 40 letras se comprueban
+    con Whisper antes de sonar por si acaso.
 
-    Si no encuentra la referencia, avisa en el log y sigue con edge-tts: no se
-    queda muda.
+7.5 POR QUÉ NO SE ENTRENA LA VOZ
 
-    Ajustes que puedes tocar en settings.json:
-        tts.speed         1.0 por defecto; 0.9 habla más despacio
-        tts.temperature   0.65; más alto = más variación de entonación entre
-                          respuestas. Por encima de 0,8 se inventa énfasis raros.
+    Se probó a ajustar XTTS con 3,4 minutos de audio real: ninguna variante
+    superó al clonado directo, y las que tocaban el modelo de lenguaje se
+    entendían peor. Lo que sí cambia la voz es la referencia (7.2).
 
-7.5 LA VOZ NO "APRENDE" MIENTRAS LA USAS — Y ENTRENARLA CON POCO AUDIO LA EMPEORA
-
-    Parece que al principio suena peor y luego mejora. No es que aprenda: el
-    clonado zero-shot copia la referencia y no cambia con el uso. Lo que pasa
-    es que las primeras respuestas suelen ser cortas y las cortas se parecen
-    menos a la referencia que las largas; eso está medido.
-
-    Lo único que la mejoraría de verdad es ENTRENAR el modelo con esa voz. Está
-    montado y cabe en una GPU de 6 GB (lote de 1, bf16, sólo las últimas capas):
-
-        npm run voice:train -- "C:\ruta\a\audios\reales"
-
-    Tarda ~5 minutos por cada minuto de audio. Deja el modelo en
-    %APPDATA%\Nova\voices\finetuned y se activa con
-        "tts": { "model_path": "C:/Users/.../Nova/voices/finetuned" }
-
-    Si el audio viene de un vídeo con música o efectos debajo (un "Quality
-    Time" de juego, un tráiler), sepáralo antes; entrenar con música enseña al
-    modelo a meter música:
-
-        core\.venv\Scripts\python -m demucs --two-stems=vocals -n htdemucs -d cuda -o "C:\salida" "C:\ruta\video.mp3"
-
-    Deja C:\salida\htdemucs\<nombre>\vocals.wav: ése es el que se mete en la
-    carpeta de entrenamiento, no el mp3 original. Demucs se instala con
-    npm run deps:voice.
-
-    PERO —y esto está medido con el mismo método objetivo de siempre, mismas
-    frases y mismas semillas para los dos— con 3,4 minutos de audio real (los
-    26 clips + Dialogue.mp3 + el vídeo "Quality Time" con la música quitada,
-    70 frases) NINGUNA variante supera al zero-shot:
-
-        zero-shot                        parecido 0,595   se entiende 0,93
-        sólo la ruta de la voz           parecido 0,574   se entiende 0,92
-        + últimas 8 capas del GPT        parecido 0,547   se entiende 0,80
-        ídem con pasos más pequeños      parecido 0,489   se entiende 0,57
-
-    Tocar el GPT rompe el habla ("T-T-Ten-Ses") por cómo está hecho XTTS —el
-    vocoder lee el estado interno del GPT, no lo que la pérdida vigila—, no
-    por falta de datos. Y la única parte que se puede entrenar sin romper nada
-    (la que convierte la referencia en identidad de voz) con este audio no
-    mejora nada medible. Por eso `model_path` sigue vacío.
-
-    Lo que SÍ cambia la voz que oyes es la referencia (7.2): mejor referencia,
-    mejor clon. Y no vale generar audio con la propia voz clonada para
-    "rellenar": es fotocopiar una fotocopia, no hay más información de la voz
-    real que la que ya está en la referencia.
-
-    Para escucharlo tú mismo: %APPDATA%\Nova\voices\cmp_base_1..5.wav contra
-    cmp_ajustado_1..5.wav, mismas frases, mismas semillas.
-
-7.6 LA VOZ DEBE SONAR COMO LAS MUESTRAS
-
-    Nova sintetiza la respuesta ENTERA de una vez (tts.chunking = "whole"). Es
-    como se generaron las muestras que aprobaste. Se probó trocear la respuesta
-    en fragmentos para que empezara a sonar antes, y la voz cambiaba: parecido
-    con la referencia 0,66 entera frente a 0,54 troceada. XTTS necesita la frase
-    completa para fijar el timbre. El precio: la voz tarda ~0,55 s por cada
-    segundo de audio en empezar (1,5 s en una respuesta corta, 4-5 en una larga).
-    Si prefieres rapidez a parecido: "tts": { "chunking": "streaming" }.
-
-7.7 LO QUE CUESTA
-
-    El modelo tarda ~70 s en subir a la GPU, pero NO tienes que esperarlo: Nova
-    queda en escucha a los ~8 s de siempre y la voz termina de cargarse por
-    detrás. Si le hablas antes de que esté lista, la primera respuesta espera lo
-    que le quede; a partir de ahí, nada.
-
-    La voz empieza a sonar entre 0,6 y 1,2 s después de que el modelo responda,
-    y ya no depende de internet. Medido en un turno completo: unos 2,6 s desde
-    que callas hasta que la oyes en una respuesta corta, 4 s en una larga. Si te arrepientes, vuelve
-    a comentar las dos líneas del .env con una almohadilla delante y tienes la
-    voz de Microsoft otra vez.
-
-    De vez en cuando —medido: 1 de cada 40 frases— XTTS se atasca y repite la
-    primera palabra. Nova lo detecta sola, porque el audio sale al doble de largo
-    de lo que debería, y lo sintetiza otra vez antes de que llegue al altavoz. En
-    el log aparece como "la voz se atascó en ...; reintento".
-
-7.8 LO LEGAL
-
-    Si los audios son de un personaje, esa voz es de un actor real y tiene
-    derechos. Para tu escritorio, igual que el retrato del avatar. Para
-    distribuir la aplicación, no. Además, el modelo XTTS-v2 tiene licencia CPML,
-    que es explícitamente no comercial.
-
-
-================================================================================
 8. SEGURIDAD — LÉELO, SON DOS MINUTOS
 ================================================================================
 
@@ -542,8 +472,59 @@ Tarda en contestar, o a veces se queda muda
     "voz adelantada", el modelo se saltó el formato EN:/ES: y la voz esperó a
     la traducción. Si "primer audio" es -1, no sonó nada: mira justo encima si
     hay un "fallo de síntesis" o si el turno se cortó porque hablaste encima.
-    Y "la voz se atascó" sin "reintento" es sólo un aviso: en las frases
-    largas el audio ya está sonando y no se repite.
+    Cada oración que dice deja además una línea "voz: «…» N tokens, X s de
+    audio en Y s (rtf 0.55)": cuánto tardó en generarla por cada segundo de
+    audio. Lo normal en una RTX 3050 es 0,5-0,6; por encima de 1 la GPU o la
+    CPU están saturadas (ver abajo). Las frases de menos de 40 letras llevan
+    también "parecido": lo que Whisper entendió de ellas, de 0 a 1; por
+    debajo de 0,75 se repite la toma antes de que suene.
+
+Contesta por escrito pero no habla / "error 1455" / "El archivo de paginación
+es demasiado pequeño para completar la operación"
+    Windows se quedó sin memoria de compromiso (RAM + archivo de paginación)
+    al cargar la voz. No es la GPU ni el disco: es que la suma de todo lo
+    abierto pasó del tope. Este portátil tiene 8 GB de RAM (7,2 utilizables)
+    y un archivo de paginación fijado a 16-24 GB; con el cliente de League,
+    Discord, Opera y VS Code abiertos ya van ~22 GB de compromiso, y la voz
+    (PyTorch + CUDA + tres modelos de Whisper + Chatterbox) necesita 8-10 GB
+    más. En Windows la memoria de la GPU también cuenta contra ese tope.
+
+    Qué hace Nova sola: sigue funcionando por escrito (la respuesta sale en
+    el subtítulo y se queda el tiempo de leerla), avisa con "Sin voz ahora
+    mismo: te lo dejo escrito", y reintenta cargar la voz a los 30 s, 1, 2,
+    5 y 10 minutos. Mientras la voz carga, el avatar está "pensando" con el
+    aviso "Preparando la voz...", no "hablando" en silencio.
+
+    Qué hacer tú, de menos a más:
+      a) Cerrar el juego o el navegador ANTES de arrancar Nova, o esperar al
+         reintento tras cerrar algo.
+      b) Agrandar el archivo de paginación (en C: hay ~98 GB libres). En
+         PowerShell COMO ADMINISTRADOR:
+             $pf = Get-CimInstance Win32_PageFileSetting -Filter "Name='c:\\pagefile.sys'"
+             Set-CimInstance -InputObject $pf -Property @{InitialSize=16384; MaximumSize=49152}
+         y reiniciar. Equivalente con ventanas: Sistema → Configuración
+         avanzada del sistema → Rendimiento: Configuración → Opciones
+         avanzadas → Memoria virtual: Cambiar → tamaño máximo 49152 MB (o
+         "Tamaño administrado por el sistema").
+      c) Más RAM: es lo único que también arregla los 88 s que tardó en
+         cargar (estaba paginando todo el rato).
+
+La voz va lenta o se corta SÓLO a ratos
+    La voz se genera token a token y eso va limitado por la CPU, no por la
+    GPU (medido: la misma frase tarda igual con la GPU fría que a 1,6 GHz).
+    Cualquier cosa que compita por la CPU la frena: un cliente de juego
+    abierto de fondo (el de League of Legends se comía un 23 % de CPU sin
+    estar jugando), un antivirus escaneando, el navegador con muchas pestañas.
+    Mira en el Administrador de tareas qué consume CPU y ciérralo. El colchón
+    del reproductor evita los cortes, pero no puede hacer que empiece antes.
+
+Abre Chrome en vez de mi navegador
+    Nova usa el navegador que tengas abierto, aunque esté minimizado, y si no
+    hay ninguno lanza el que pongas en settings.json:
+        "browser": { "prefer": "opera" }
+    (opera, chrome, edge, brave, firefox o vivaldi). Sin preferido y sin
+    navegador abierto, abre su propio Chrome, que es el único que puede
+    controlar a fondo (leer la página, rellenar formularios).
 
 "No encuentro el micrófono" o no te escucha
     Windows → Configuración → Privacidad → Micrófono → permite el acceso a las
@@ -662,11 +643,15 @@ Dice "listo, lo hice" y no ha hecho nada
 Nova se interrumpe sola / responde a cosas que no dije
     El micrófono del portátil oye los altavoces del portátil. Si Nova corta su
     propia respuesta y luego "entiende" basura ("¡Suscríbete!", "Con."), es su
-    voz volviendo por el micrófono. Ya hay dos defensas: para interrumpirla hace
-    falta hablar por encima de un volumen mínimo (session.barge_in_min_level,
-    0.04) y durante 400 ms seguidos. Si aun así se interrumpe sola, sube el
-    nivel a 0.06 en settings.json; si usas auriculares, puedes bajarlo a 0.01;
-    y si no quieres interrumpirla nunca, "session": { "barge_in": false }.
+    voz volviendo por el micrófono. Ya hay tres defensas: para interrumpirla
+    hace falta hablar por encima de un volumen mínimo (session.barge_in_min_level,
+    0.04), durante 400 ms seguidos, y además por encima de 1,8 veces el eco
+    que Nova mide durante el primer segundo de cada respuesta (así el umbral
+    sigue al volumen de los altavoces). El log lo cuenta: "barge-in: el usuario
+    interrumpe (nivel 0.15, umbral 0.07)". Si aun así se interrumpe sola, sube
+    el nivel mínimo a 0.06 en settings.json; si usas auriculares, puedes
+    bajarlo a 0.01; y si no quieres interrumpirla nunca,
+    "session": { "barge_in": false }.
 
 Entiende mal los nombres de aplicaciones o de personas
     Son palabras que no suenan a español: el punto exacto donde Whisper falla.
@@ -725,11 +710,22 @@ Los logs completos están en:
 10. CAMBIAR EL AVATAR
 ================================================================================
 
-La imagen está en:
-    desktop\\src\\renderer\\overlay\\assets\\nova-avatar.webp
+Son dos imágenes, en desktop\\src\\renderer\\overlay\\assets\\:
+    nova-avatar.webp             la de siempre (escuchando, pensando, en reposo)
+    nova-avatar-sonriendo.webp   la que se ve mientras habla (con fundido)
 
-Sustitúyela por cualquier PNG o WEBP con fondo transparente, con el mismo
-nombre, y listo. Funciona mejor si la figura es vertical y está recortada.
+Sustitúyelas por cualquier PNG o WEBP CON FONDO TRANSPARENTE, con el mismo
+nombre. Un JPEG no vale: no tiene transparencia y saldría un rectángulo
+blanco sobre el escritorio (si sólo tienes JPEG, hay que quitarle el fondo
+antes; la sonriente se preparó así). Las dos se escalan a la misma altura y
+se apoyan en la misma línea, así que conviene que estén recortadas a la
+figura y encuadradas parecido para que el cambio no salte.
+
+El retrato mide siempre lo mismo: la ventana menos una banda fija abajo para
+el texto. Subtítulos y preguntas de confirmación van SUPERPUESTOS, anclados al
+borde inferior: uno corto cabe en la banda; uno largo sube por encima de los
+pies del retrato, sobre un panel oscuro, y el retrato no cambia de tamaño.
+(Antes texto y retrato se repartían la altura, y cada pregunta lo aplastaba.)
 
 Si además quieres cambiar el icono de la bandeja del sistema:
     pip install pillow

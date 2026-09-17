@@ -288,7 +288,8 @@ class Orchestrator:
         try:
             response = await self._llm.chat([
                 {"role": "system", "content": (
-                    f"Traduce al {_language_name(self._speak_language)} el texto del usuario. "
+                    f"Traduce al {_language_name(self._speak_language)} el texto del usuario, "
+                    "como una oración completa y natural de al menos seis palabras. "
                     "Las marcas como [[0]] o [[1]] se copian tal cual, sin tocarlas ni "
                     "moverlas de sitio. Responde sólo con la traducción.")},
                 {"role": "user", "content": protected},

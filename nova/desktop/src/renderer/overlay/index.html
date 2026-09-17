@@ -20,12 +20,10 @@
       <div class="readout">
         <p class="transcript" id="transcript"></p>
         <span class="status" id="status"><span class="dot"></span><span id="status-text"></span></span>
-        <section class="confirm" id="confirm" role="alertdialog" aria-live="assertive">
+        <!-- La confirmación se contesta por voz («sí» / «no»): aquí sólo se
+             muestra la pregunta, sin botones. -->
+        <section class="confirm" id="confirm" role="status" aria-live="assertive">
           <p id="confirm-text"></p>
-          <div class="row">
-            <button type="button" data-kind="approve" id="confirm-yes">Sí, adelante</button>
-            <button type="button" data-kind="deny" id="confirm-no">Cancelar</button>
-          </div>
         </section>
       </div>
     </main>

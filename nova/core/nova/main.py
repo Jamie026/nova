@@ -7,6 +7,11 @@
 from __future__ import annotations
 
 import argparse
+import os
+
+# Las barras de progreso de tqdm (Chatterbox, huggingface) salen por stderr y
+# la interfaz las muestra como líneas de log. Se apagan antes de importar nada.
+os.environ.setdefault("TQDM_DISABLE", "1")
 import asyncio
 import contextlib
 import logging

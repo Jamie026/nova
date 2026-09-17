@@ -16,7 +16,7 @@ const canvas = document.getElementById('avatar');
  * resto de este archivo ni el núcleo se enteran.
  */
 const SKINS = {
-  portrait: () => new window.PortraitAvatar(canvas, 'assets/nova-avatar.webp'),
+  portrait: () => new window.PortraitAvatar(canvas, 'assets/nova-avatar.webp', 'assets/nova-avatar-sonriendo.webp'),
   aperture: () => new window.ApertureAvatar(canvas),
 };
 
@@ -64,6 +64,7 @@ function showTranscript(text, isFinal) {
   transcriptEl.textContent = text;
   transcriptEl.dataset.visible = text ? 'true' : 'false';
   transcriptEl.dataset.final = isFinal ? 'true' : 'false';
+  holdingSubtitle = false;
   if (transcriptTimer) clearTimeout(transcriptTimer);
   if (text && isFinal) {
     transcriptTimer = setTimeout(() => {
@@ -72,28 +73,43 @@ function showTranscript(text, isFinal) {
   }
 }
 
+// El subtítulo de lo que dice Nova no tiene temporizador: se queda mientras
+// habla (una respuesta larga son 20-30 s) y se va SUBTITLE_GRACE_MS después de
+// que termine, para acabar de leerlo. Con el temporizador fijo de 6 s se
+// esfumaba a media frase.
+const SUBTITLE_GRACE_MS = 2500;
+let holdingSubtitle = false;
+
+function showSubtitle(text) {
+  transcriptEl.textContent = text;
+  transcriptEl.dataset.visible = text ? 'true' : 'false';
+  transcriptEl.dataset.final = 'true';
+  if (transcriptTimer) clearTimeout(transcriptTimer);
+  holdingSubtitle = Boolean(text);
+}
+
+function releaseSubtitle() {
+  if (!holdingSubtitle) return;
+  holdingSubtitle = false;
+  if (transcriptTimer) clearTimeout(transcriptTimer);
+  transcriptTimer = setTimeout(() => {
+    transcriptEl.dataset.visible = 'false';
+  }, SUBTITLE_GRACE_MS);
+}
+
 function askConfirmation(id, text) {
   pendingConfirmId = id;
   confirmText.textContent = text;
   confirmEl.dataset.visible = 'true';
-  document.getElementById('confirm-yes').focus();
 }
 
-function answerConfirmation(approved) {
-  if (!pendingConfirmId) return;
-  window.nova.send({ type: 'confirm_response', id: pendingConfirmId, approved });
+function closeConfirmation() {
   pendingConfirmId = null;
   confirmEl.dataset.visible = 'false';
 }
 
-document.getElementById('confirm-yes').addEventListener('click', () => answerConfirmation(true));
-document.getElementById('confirm-no').addEventListener('click', () => answerConfirmation(false));
-
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    if (pendingConfirmId) answerConfirmation(false);
-    else window.nova.send({ type: 'stop' });
-  }
+  if (event.key === 'Escape') window.nova.send({ type: 'stop' });
 });
 
 document.getElementById('avatar-host').addEventListener('dblclick', () => window.nova.openSettings());
@@ -103,7 +119,9 @@ window.nova.onEvent((event) => {
     case 'state':
       avatar.setState(event.state);
       showStatus(STATE_LABEL[event.state] ?? '');
-      if (event.state === 'IDLE' || event.state === 'SLEEPING') showTranscript('', true);
+      // Terminó de hablar (o ya no va a hablar): el subtítulo se va con gracia.
+      if (event.state === 'LISTENING' || event.state === 'IDLE' || event.state === 'SLEEPING') releaseSubtitle();
+      if ((event.state === 'IDLE' || event.state === 'SLEEPING') && !holdingSubtitle && !transcriptTimer) showTranscript('', true);
       break;
     case 'status':
       if (event.text) showStatus(event.text);
@@ -112,7 +130,7 @@ window.nova.onEvent((event) => {
       showTranscript(event.text, !event.partial);
       break;
     case 'assistant_text':
-      showTranscript(event.text, true);
+      showSubtitle(event.text);
       break;
     case 'level':
       avatar.setLevel(event.value);
@@ -121,11 +139,7 @@ window.nova.onEvent((event) => {
       askConfirmation(event.id, event.text);
       break;
     case 'confirm_resolved':
-      // Contestada por voz o expirada: fuera el panel, sin reenviar nada.
-      if (pendingConfirmId === event.id) {
-        pendingConfirmId = null;
-        confirmEl.dataset.visible = 'false';
-      }
+      if (pendingConfirmId === event.id) closeConfirmation();
       break;
     case 'settings':
       applySkin(event.data?.config?.avatar?.skin ?? 'portrait');

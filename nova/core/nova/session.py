@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Optional
 
-from .agent import consent
+from .agent import consent, dismissal
 from .agent.orchestrator import Orchestrator
 from .audio.format import FRAME_BYTES, FRAME_MS
 from .audio.mic import MicrophoneStream, frame_rms, rms_level
@@ -31,6 +31,13 @@ from .state import AgentState, StateMachine
 log = logging.getLogger("nova.session")
 
 _SILENT_FRAME = bytes(FRAME_BYTES)
+_ECHO_CALIBRATION_S = 1.0     # primer segundo de audio de cada respuesta: se mide el eco
+_ECHO_MARGIN = 1.8            # para interrumpir hay que superar el eco por este factor
+# Si la voz no carga (típicamente: Windows sin memoria de compromiso), se
+# reintenta con estas esperas y luego se deja de insistir. Mientras tanto Nova
+# contesta por escrito.
+_TTS_RETRY_DELAYS_S = (30, 60, 120, 300, 600)
+_WINERROR_COMMIT_LIMIT = 1455   # «El archivo de paginación es demasiado pequeño»
 
 
 class VoiceSession:
@@ -57,8 +64,17 @@ class VoiceSession:
             end_ms=int(config.get("vad.end_ms", 800)),
         ))
         self._barge_min_level = float(config.get("session.barge_in_min_level", 0.04))
+        # Eco medido en cada respuesta: ver _handle_barge_in.
+        self._audio_since: float | None = None
+        self._echo_samples: list[float] = []
+        self._echo_level = 0.0
 
         self._utterance = bytearray()
+        # Mientras Nova piensa o ejecuta, el micrófono sólo busca un «para» o
+        # un «descansa»: ver _handle_working.
+        self._side = bytearray()
+        self._side_capturing = False
+        self._side_task: Optional[asyncio.Task] = None
         # Colchón de tramas anteriores al inicio de voz. Sin esto se pierde el
         # principio de cada frase: el VAD necesita `start_ms` de voz seguida para
         # decidir que alguien habló, y esas tramas —las que contienen la primera
@@ -90,16 +106,20 @@ class VoiceSession:
         # Los arranques caros, a la vez: ninguno depende de los otros. Cargar
         # Whisper en la GPU son ~12 s, el detector otros ~5, y la conexión con la
         # API cabe entera dentro de esa espera.
+        checker = getattr(self._stt, "check_speech", None)
+        if checker is not None and hasattr(self._tts, "verifier"):
+            self._tts.verifier = checker
         self._wake, *_ = await asyncio.gather(
             asyncio.to_thread(build_wake_word, self._config),
             self._stt.warmup(),
             self._agent.warmup(),
         )
-        # La voz va aparte y NO se espera. Con la voz clonada son 80 s más, y
-        # bloquear ahí significa que Nova no te oye durante un minuto y medio
-        # mientras carga algo que sólo hace falta cuando ya tiene algo que decir.
-        # Si el usuario habla antes de que termine, `speak()` espera lo que le
-        # quede: peor es no poder ni hablarle.
+        # La voz arranca DESPUÉS de Whisper y no se espera: si el usuario habla
+        # antes de que termine, `speak()` espera lo que le quede. Se probó a
+        # lanzarla en paralelo para ganar 12 s y salió caro: CTranslate2 y
+        # PyTorch inicializando CUDA a la vez en dos hilos colgaban el arranque
+        # o lo mataban con un access violation (código 3221225477), dos de
+        # cada dos veces un día y ninguna el anterior. En serie no falla.
         self._tts_warmup_task = asyncio.create_task(self._warmup_tts(), name="tts-warmup")
         await self._mic.start()
         self._running = True
@@ -108,26 +128,56 @@ class VoiceSession:
         log.info("Nova en escucha pasiva. Di la palabra activadora para empezar.")
 
     async def _speak(self, text: str, language: str | None = None) -> bool:
-        """Habla, indicando idioma si el motor sabe cambiarlo por frase."""
-        if language is None:
-            return await self._tts.speak(text)
+        """Habla, indicando idioma si el motor sabe cambiarlo por frase.
+        Sin voz (no cargó), no falla: la pregunta ya está en pantalla."""
         try:
-            return await self._tts.speak(text, language=language)
-        except TypeError:
-            return await self._tts.speak(text)   # motor de un solo idioma
-
-    async def _warmup_tts(self) -> None:
-        """El motor de voz local sube pesos a la GPU; el de red no tiene nada que
-        calentar. De ahí el getattr en vez de exigirlo en el Protocol."""
-        warm = getattr(self._tts, "warmup", None)
-        if warm is None:
-            return
-        try:
-            await warm()
+            if language is None:
+                return await self._tts.speak(text)
+            try:
+                return await self._tts.speak(text, language=language)
+            except TypeError:
+                return await self._tts.speak(text)   # motor de un solo idioma
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.warning("la voz no pudo precargarse: %s", exc)
+            log.warning("sin voz para «%s»: %s", text[:40], exc)
+            return False
+
+    async def _warmup_tts(self) -> None:
+        """El motor de voz local sube pesos a la GPU; el de red no tiene nada que
+        calentar. De ahí el getattr en vez de exigirlo en el Protocol.
+
+        Si falla se reintenta más tarde: la causa vista es Windows sin memoria
+        de compromiso (RAM + archivo de paginación) con un juego, Discord y el
+        navegador abiertos, y eso se arregla solo cuando algo se cierra. Sin
+        reintento, la voz se quedaba muerta hasta reiniciar Nova.
+        """
+        warm = getattr(self._tts, "warmup", None)
+        if warm is None:
+            return
+        for attempt, delay in enumerate((0,) + _TTS_RETRY_DELAYS_S):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                await warm()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._explain_voice_failure(exc)
+                if attempt < len(_TTS_RETRY_DELAYS_S):
+                    log.warning("la voz no pudo precargarse (intento %d): %s — reintento en %d s",
+                                attempt + 1, exc, _TTS_RETRY_DELAYS_S[attempt])
+                else:
+                    log.error("la voz no pudo precargarse tras %d intentos: %s. Nova sigue, "
+                              "por escrito.", attempt + 1, exc)
+
+    @staticmethod
+    def _explain_voice_failure(exc: BaseException) -> None:
+        if isinstance(exc, OSError) and getattr(exc, "winerror", None) == _WINERROR_COMMIT_LIMIT:
+            log.error("Windows se quedó sin memoria de compromiso (RAM + archivo de paginación) "
+                      "al cargar la voz. Cierra algo grande (el juego, pestañas del navegador) "
+                      "o agranda el archivo de paginación: ver INSTRUCCIONES §9, «error 1455».")
 
     async def stop(self) -> None:
         self._running = False
@@ -146,6 +196,9 @@ class VoiceSession:
         if new is AgentState.SPEAKING:
             self._barge_vad.reset()
             self._preroll.clear()
+            self._audio_since = None
+            self._echo_samples = []
+            self._echo_level = 0.0
         await self._ipc.broadcast(state_event(new.value))
 
     # -------------------------------------------------------------- bucle de audio
@@ -174,6 +227,8 @@ class VoiceSession:
                     await self._handle_listening(frame)
                 elif state is AgentState.SPEAKING and self._config.get("session.barge_in", True):
                     await self._handle_barge_in(frame)
+                elif state in (AgentState.THINKING, AgentState.EXECUTING):
+                    await self._handle_working(frame)
             except Exception:
                 log.exception("fallo en el bucle de audio")
                 await self._machine.to(AgentState.ERROR)
@@ -260,11 +315,13 @@ class VoiceSession:
         El colchón de tramas anteriores se mantiene también aquí, para que
         interrumpir no se coma la primera sílaba de lo que dice el usuario.
         """
-        loud = frame_rms(frame) >= self._barge_min_level
+        level = frame_rms(frame)
+        threshold = self._barge_threshold(level)
+        loud = level >= threshold
         self._preroll.append(frame)
         event = self._barge_vad.push(frame if loud else _SILENT_FRAME)
         if event is VadEvent.SPEECH_START:
-            log.info("barge-in: el usuario interrumpe")
+            log.info("barge-in: el usuario interrumpe (nivel %.3f, umbral %.3f)", level, threshold)
             preroll = b"".join(self._preroll)
             await self._tts.stop()
             await self._cancel_turn()
@@ -274,11 +331,86 @@ class VoiceSession:
             self._utterance_started = time.monotonic()
             self._last_partial = time.monotonic()
 
+    def _barge_threshold(self, level: float) -> float:
+        """Nivel a partir del cual una trama cuenta como voz encima de Nova.
+
+        El umbral fijo dependía del volumen de los altavoces: subido el
+        volumen, el eco pasaba de 0,04 y Nova se interrumpía sola (y Whisper
+        transcribía su inglés como «¡Adiós!»). Ahora el primer segundo de
+        audio de cada respuesta mide cuánto eco llega, y para interrumpir
+        hace falta superar 1,8 veces eso. Sin audio sonando, vale el fijo.
+        """
+        if self._audio_since is None:
+            return self._barge_min_level
+        elapsed = time.monotonic() - self._audio_since
+        if elapsed < _ECHO_CALIBRATION_S:
+            if not self._echo_samples:
+                self._barge_vad.reset()   # lo acumulado antes del audio no cuenta
+            self._echo_samples.append(level)
+            return 10.0          # calibrando: no se interrumpe
+        if self._echo_samples and not self._echo_level:
+            ordered = sorted(self._echo_samples)
+            self._echo_level = ordered[int(len(ordered) * 0.9)]
+            log.debug("eco de los altavoces: %.3f (umbral %.3f)", self._echo_level,
+                      max(self._barge_min_level, self._echo_level * _ECHO_MARGIN))
+        return max(self._barge_min_level, self._echo_level * _ECHO_MARGIN)
+
+    async def _handle_working(self, frame: bytes) -> None:
+        """Audio mientras Nova piensa o ejecuta herramientas.
+
+        Antes el micrófono se ignoraba en estos estados: un «descansa» o un
+        «para» en mitad de una cadena de herramientas no llegaba a ningún
+        sitio. Ahora se escucha con el mismo filtro que el barge-in (volumen
+        y duración), pero lo oído sólo cuenta si es una orden de parar o de
+        despedirse: cualquier otra cosa (el usuario hablando con alguien) se
+        ignora y la tarea sigue. Cortar una cadena de herramientas a medias
+        por una conversación ajena sería peor que no oír.
+        """
+        level = frame_rms(frame)
+        loud = level >= self._barge_threshold(level)
+        if not self._side_capturing:
+            self._preroll.append(frame)
+        event = self._barge_vad.push(frame if loud else _SILENT_FRAME)
+        if event is VadEvent.SPEECH_START and not self._side_capturing:
+            self._side_capturing = True
+            self._side = bytearray(b"".join(self._preroll))
+            self._preroll.clear()
+        if not self._side_capturing:
+            return
+        self._side.extend(frame)
+        # «Para» o «descansa» no duran cuatro segundos: si se pasa, se cierra
+        # y se interpreta lo que haya.
+        if event is VadEvent.SPEECH_END or len(self._side) > 32 * 4000:
+            audio = bytes(self._side)
+            self._side_capturing = False
+            self._side.clear()
+            self._barge_vad.reset()
+            if self._side_task is None or self._side_task.done():
+                self._side_task = asyncio.create_task(self._check_side_utterance(audio),
+                                                      name="stt-side")
+
+    async def _check_side_utterance(self, audio: bytes) -> None:
+        if len(audio) < 6400:   # < 200 ms: ruido
+            return
+        result = await self._stt.transcribe(audio, final=True, strict=False)
+        text = result.text.strip()
+        if not text:
+            return
+        kind = dismissal.interpret(text)
+        if kind is None or self._machine.state not in (AgentState.THINKING, AgentState.EXECUTING,
+                                                       AgentState.SPEAKING):
+            log.info("oído mientras trabajaba (ignorado): %s", text)
+            return
+        await self._ipc.broadcast(transcript(text, partial=False))
+        await self._dismiss(kind, text)
+
     # ----------------------------------------------------------------- turnos
     async def _begin_listening(self, greet: bool, drain: bool = True) -> None:
         self._vad.reset()
         self._capturing = False
         self._utterance.clear()
+        self._side_capturing = False
+        self._side.clear()
         # Al interrumpir NO se vacía la cola: esas tramas son el principio de lo
         # que el usuario está diciendo ahora mismo y perderlas se come la primera
         # palabra.
@@ -327,7 +459,39 @@ class VoiceSession:
     async def handle_text(self, text: str) -> None:
         """Punto de entrada único de un turno: lo usan la voz y el panel de texto."""
         await self._cancel_turn()
+        kind = dismissal.interpret(text)
+        if kind is not None:
+            await self._dismiss(kind, text)
+            return
         self._turn_task = asyncio.create_task(self._run_turn(text), name="agent-turn")
+
+    async def _dismiss(self, kind: str, heard: str) -> None:
+        """«Descansa» → se calla, se despide en dos palabras y se duerme.
+        «Para» → se calla, corta lo que estuviera haciendo y vuelve a escuchar.
+
+        Ninguna de las dos pasa por el modelo: son las dos órdenes que tienen
+        que obedecerse al instante, y el modelo tardaba dos segundos en
+        contestar con una despedida de cinco.
+        """
+        await self._cancel_turn()
+        if kind == dismissal.STOP:
+            log.info("el usuario manda parar: «%s»", heard)
+            await self._ipc.broadcast(assistant_text("Vale, paro."))
+            await self._begin_listening(greet=False)
+            return
+        log.info("el usuario despide a Nova: «%s»", heard)
+        farewell = str(self._config.get("session.farewell", "Okay, resting."))
+        await self._ipc.broadcast(assistant_text("Descansando.", farewell))
+        if farewell:
+            await self._machine.to(AgentState.SPEAKING)
+            try:
+                await self._tts.speak(farewell)
+            except Exception as exc:
+                log.warning("no pude despedirme: %s", exc)
+        await self._machine.to(AgentState.SLEEPING)
+        await self._ipc.broadcast(status(""))
+        await asyncio.sleep(0.2)
+        await self._machine.to(AgentState.IDLE)
 
     async def _run_turn(self, text: str) -> None:
         """Un turno: modelo → (herramientas) → voz.
@@ -345,11 +509,33 @@ class VoiceSession:
         def on_level(value: float) -> None:
             if not first_audio[0]:
                 first_audio[0] = time.monotonic()
+                self._audio_since = first_audio[0]
             self._ipc.broadcast_soon(mic_level(value))
 
         async def say(spoken: str) -> bool:
-            await self._machine.to(AgentState.SPEAKING)
-            return await self._tts.speak(spoken, on_level=on_level)
+            # Si la voz aún está cargando, se espera PENSANDO y no HABLANDO:
+            # el avatar estuvo «hablando» 70 s sin decir nada mientras
+            # Chatterbox cargaba (y al final ni cargó).
+            if getattr(self._tts, "ready", True) is False:
+                await self._ipc.broadcast(status("Preparando la voz..."))
+            try:
+                warm = getattr(self._tts, "warmup", None)
+                if warm is not None and getattr(self._tts, "ready", True) is False:
+                    await warm()
+                await self._machine.to(AgentState.SPEAKING)
+                return await self._tts.speak(spoken, on_level=on_level)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Sin voz no se pierde la respuesta: ya está en pantalla. Se
+                # deja el tiempo de leerla y se sigue escuchando; el estado
+                # ERROR era para fallos del turno, no para quedarse mudo.
+                self._explain_voice_failure(exc)
+                log.warning("sin voz para esta respuesta: %s", exc)
+                await self._ipc.broadcast(status("Sin voz ahora mismo: te lo dejo escrito"))
+                await self._machine.to(AgentState.SPEAKING)
+                await asyncio.sleep(min(10.0, 1.5 + len(spoken) / 15))
+                return False
 
         def early_speak(spoken: str) -> None:
             nonlocal early, early_text
@@ -368,8 +554,10 @@ class VoiceSession:
                     await early
                 else:
                     if early is not None:
-                        await self._tts.stop()
-                        early.cancel()
+                        # Lo adelantado era un preámbulo («Sure, I'm opening
+                        # YouTube…») antes de una herramienta: se deja
+                        # terminar y luego va la respuesta final. Cortarlo a
+                        # media frase sonaba a fallo.
                         await asyncio.gather(early, return_exceptions=True)
                     await say(turn.spoken)
                 log.info("turno: modelo %.1f s · primer audio a %.1f s%s", model_done,
@@ -506,13 +694,21 @@ class VoiceSession:
         self._vad.reset()
         if len(audio) < 4800 or self._confirm_id is None:   # < 150 ms: ruido
             return
-        result = await self._stt.transcribe(audio, final=True)
+        # Sin filtro de alucinaciones: «No, no, no, no.» es un no rotundo, y el
+        # filtro de repeticiones lo tiraba (pasó: el usuario tuvo que decir que
+        # no tres veces).
+        result = await self._stt.transcribe(audio, final=True, strict=False)
         text = result.text.strip()
         log.info("respuesta a la confirmación: %r", text or "(vacía)")
         if not text:
             return
         await self._ipc.broadcast(transcript(text, partial=False))
         decision = consent.interpret(text)
+        if decision is None and dismissal.interpret(text) == dismissal.SLEEP:
+            # «Descansa» con una pregunta pendiente: no se hace, y a dormir.
+            self.resolve_confirmation(self._confirm_id, False)
+            await self._dismiss(dismissal.SLEEP, text)
+            return
         if decision is None:
             await self._ipc.broadcast(status("No te entendí: di «sí» o «no»"))
             return

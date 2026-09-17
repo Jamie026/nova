@@ -19,8 +19,8 @@ import { join } from 'node:path';
 import { loadPlacement, savePlacement, type OverlayCorner, type OverlayPlacement } from './window-store';
 
 /** El retrato es vertical (360x469), así que la ventana también lo es. */
-const OVERLAY_WIDTH = 300;
-const OVERLAY_HEIGHT = 420;
+const OVERLAY_WIDTH = 260;
+const OVERLAY_HEIGHT = 360;   // era 300x420; «un poco más pequeño»
 const MARGIN = 24;
 
 export function rendererPath(area: 'overlay' | 'settings', root: string): string {
