@@ -4,12 +4,30 @@ Agente de voz de escritorio en tiempo real para Windows 11. Vive en la bandeja
 del sistema, escucha una palabra activadora, muestra un avatar flotante y
 controla aplicaciones y el navegador mediante herramientas declaradas.
 
-```
+## Instalación en un solo comando
+
+Con Python 3.10+ y Node 20+ instalados, esto lo deja **todo** listo (entorno
+de Python, voz clonada si hay GPU NVIDIA, navegador, modelos ya descargados,
+Electron y el `.env`). Tarda 10–20 minutos y ocupa ~8 GB con la voz:
+
+```powershell
 git clone <tu-repo> nova && cd nova
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 # abre .env y pon tu DEEPSEEK_API_KEY
 npm run dev
 ```
+
+En macOS/Linux, `bash scripts/setup.sh`. Los dos aceptan `-SinVoz` /
+`--sin-voz` (sin PyTorch ni Chatterbox, ~4 GB menos; Nova habla con edge-tts)
+y `-SinModelos` / `--sin-modelos` (los modelos se bajan en el primer arranque).
+Es seguro repetirlo: no reinstala lo que ya está.
+
+La voz clonada va incluida: la referencia está en el repo
+(`core/nova/tts/voices/reference.wav`) y el proveedor por defecto es `auto`
+(voz clonada si está instalada, edge-tts si no), así que quien clone no tiene
+que copiar ningún audio ni tocar el `.env`. Para clonar otra voz, pon un WAV
+en `%APPDATA%\Nova\voices\reference.wav` (o `NOVA_TTS_REFERENCE=` en
+`.env`): gana sobre la del repo. Sección 7 de `INSTRUCCIONES.txt`.
 
 Sin tocar nada más, `npm run dev:mock` arranca todo con proveedores simulados:
 la interfaz, el avatar y el flujo completo funcionan sin gastar llamadas a la API
@@ -22,7 +40,7 @@ ni cargar modelos pesados.
 | | |
 |---|---|
 | Escucha pasiva | Detección local de palabra activadora, sin enviar audio a ningún sitio |
-| Voz | Transcripción local con Whisper, respuesta hablada con voces neuronales |
+| Voz | Transcripción local con Whisper; habla con una voz clonada en local (Chatterbox Turbo) o con voces neuronales de red |
 | Interrupción | Le hablas mientras habla y se calla en menos de 50 ms |
 | Conversación | Varios turnos seguidos sin repetir la palabra activadora |
 | Aplicaciones | Abrir, cerrar, enfocar, minimizar, listar ventanas |
@@ -94,10 +112,12 @@ nova/
 
 * Windows 11 (el núcleo y el navegador funcionan en macOS y Linux; el control de
   ventanas todavía no)
-* Python 3.10 o superior
-* Node.js 18 o superior
-* Google Chrome o Microsoft Edge
+* Python 3.10 o superior (probado con 3.13)
+* Node.js 20 o superior
+* Un navegador (Opera, Chrome o Edge; se elige con `browser.prefer`)
 * Una clave de DeepSeek en `.env`
+* Para la voz clonada: GPU NVIDIA con 6 GB y, en la práctica, 16 GB de RAM
+  (con 8 GB funciona pero pagina; ver «error 1455» en `INSTRUCCIONES.txt`)
 * Opcional: una clave gratuita de Picovoice para la palabra activadora ligera
 
 ## Uso
@@ -126,7 +146,10 @@ npm run dev:mock     # todo simulado, sin API ni modelos
 npm run core         # sólo el núcleo, con logs en la terminal
 npm run test:core    # pruebas de los componentes críticos
 npm run deps:core    # reinstala las dependencias de Python en core/.venv
+npm run deps:voice   # sólo la voz clonada (PyTorch CUDA + Chatterbox)
+npm run models:download  # baja por adelantado Whisper, wake word y la voz
 npm run typecheck    # TypeScript sin emitir
+npm run dist         # instalador Nova-Setup-<versión>.exe en release/
 ```
 
 Para depurar los dos procesos a la vez desde VS Code, copia
@@ -172,10 +195,12 @@ Los dos que conviene conocer:
 
 ### Cambiar el avatar
 
-El retrato está en `desktop/src/renderer/overlay/assets/nova-avatar.webp`.
-Sustitúyelo por cualquier PNG o WEBP con fondo transparente y ya está; si además
-quieres que cambie el icono de la bandeja, `python scripts/make-tray-icon.py`
-(necesita Pillow). En los ajustes puedes volver al avatar procedural.
+Son dos imágenes en `desktop/src/renderer/overlay/assets/`: `nova-avatar.webp`
+(en reposo, escuchando, pensando) y `nova-avatar-sonriendo.webp` (mientras
+habla, con fundido). Sustitúyelas por cualquier PNG o WEBP con fondo
+transparente y el mismo nombre; si además quieres que cambie el icono de la
+bandeja, `python scripts/make-tray-icon.py` (necesita Pillow). En los ajustes
+puedes volver al avatar procedural.
 
 ## Lo que falta
 
@@ -183,7 +208,6 @@ En orden de utilidad:
 
 1. Mover, renombrar y borrar archivos (a la papelera, nunca permanente)
 2. Lectura de PDF y Word para `read_text_file`
-3. Localizar controles en pantalla por texto (OCR) en vez de por coordenadas
-4. Resumen automático de la conversación para sesiones largas
-5. `MacAdapter` y `LinuxAdapter` detrás de `OsAdapter`
-6. Empaquetado con electron-builder e instalador
+3. Resumen automático de la conversación para sesiones largas
+4. `MacAdapter` y `LinuxAdapter` detrás de `OsAdapter`
+5. Firmar el instalador (hoy SmartScreen avisa la primera vez)

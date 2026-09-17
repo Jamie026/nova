@@ -24,6 +24,7 @@
     "voice:build": "node scripts/py.js -m nova.tts.voice_profile",
     "setup:win": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "setup": "bash scripts/setup.sh",
+    "models:download": "node scripts/py.js -m nova.setup_models",
     "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {

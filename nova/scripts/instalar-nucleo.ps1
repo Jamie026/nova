@@ -42,8 +42,12 @@ try {
   }
   Write-Host "`n== Navegador de Playwright ==" -ForegroundColor Cyan
   & .\.venv\Scripts\python.exe -m playwright install chromium
-  Write-Host "`n== Modelos de la palabra activadora ==" -ForegroundColor Cyan
-  & .\.venv\Scripts\python.exe -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"
+  Write-Host "`n== Modelos (Whisper, palabra activadora, voz) ==" -ForegroundColor Cyan
+  if ($Voz) {
+    & .\.venv\Scripts\python.exe -m nova.setup_models
+  } else {
+    & .\.venv\Scripts\python.exe -m nova.setup_models --sin-voz
+  }
 } finally {
   Pop-Location
 }

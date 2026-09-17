@@ -59,22 +59,31 @@ esperar. Eso es lo único que cambia entre tener tarjeta y no tenerla.
     Truco: en el Explorador, dentro de la carpeta nova, escribe "powershell" en
     la barra de direcciones y pulsa Enter.
 
-2.3 Ejecuta el instalador:
+2.3 Ejecuta el instalador. UN SOLO COMANDO lo instala todo:
 
         powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1
 
-    Esto hace seis cosas, y tarda entre 5 y 15 minutos la primera vez:
-      - crea un entorno virtual de Python en core\\.venv
-      - instala las dependencias de Python (ahí va el grueso del tiempo)
-      - instala el navegador de Playwright
-      - descarga los modelos de la palabra activadora sin clave (7 MB)
-      - instala las dependencias de Electron (npm install)
-      - crea el archivo .env a partir de .env.example
+    Hace seis cosas seguidas, y tarda entre 10 y 20 minutos la primera vez:
+      1. crea un entorno virtual de Python en core\\.venv e instala las
+         dependencias del núcleo (ahí va buena parte del tiempo)
+      2. instala la voz clonada (PyTorch con CUDA + Chatterbox Turbo, ~4 GB)
+         si detecta una GPU NVIDIA; si no, la salta y Nova habla con edge-tts
+      3. instala el navegador de Playwright
+      4. descarga TODOS los modelos por adelantado: los tres Whisper
+         (transcripción, juez de frases cortas y detector de la palabra),
+         la palabra activadora sin clave y los pesos de la voz (~2 GB), para
+         que el primer "Corrin" no se quede esperando red
+      5. instala las dependencias de Electron (npm install)
+      6. crea el archivo .env a partir de .env.example
 
-    Espacio en disco: unos 3,5 GB. Lo gordo son las librerías de CUDA (~1 GB,
-    sólo útiles si tienes GPU NVIDIA), el modelo de Whisper (~500 MB, que se baja
-    en el primer arranque) y el Chromium de Playwright. Si no tienes GPU NVIDIA,
-    borra las dos líneas nvidia-* de core\\requirements.txt antes de instalar.
+    Opciones:  -SinVoz      sin PyTorch ni Chatterbox (~4 GB menos)
+               -SinModelos  los modelos se bajan en el primer arranque
+    Es seguro repetirlo: no reinstala ni vuelve a bajar lo que ya está.
+
+    Espacio en disco: unos 8 GB con la voz, ~3,5 GB sin ella. Lo gordo son
+    PyTorch con CUDA (~3 GB), los modelos (~3,5 GB entre Whisper medium y la
+    voz) y el Chromium de Playwright. Si no tienes GPU NVIDIA, borra las dos
+    líneas nvidia-* de core\\requirements.txt antes de instalar.
 
     Si PowerShell se queja de políticas de ejecución, el "-ExecutionPolicy
     Bypass" del comando ya lo resuelve. No hace falta cambiar nada del sistema.
@@ -93,10 +102,12 @@ esperar. Eso es lo único que cambia entre tener tarjeta y no tenerla.
     Si más adelante cambian las dependencias de Python no hace falta repetir
     todo esto: basta con
 
-        npm run deps:core
+        npm run deps:core            (el núcleo)
+        npm run deps:voice           (sólo la voz clonada)
+        npm run models:download      (volver a bajar modelos que falten)
 
-    que instala requirements.txt en el venv correcto sin que tengas que acordarte
-    de la ruta del intérprete.
+    que usan el venv correcto sin que tengas que acordarte de la ruta del
+    intérprete.
 
 
 ================================================================================
@@ -374,26 +385,36 @@ inglés: por eso la voz va en inglés y los subtítulos en español (§3).
 
 7.1 INSTALAR
 
-    npm run deps:voice
+    Ya lo hace scripts\setup.ps1 (§2.3) cuando detecta una GPU NVIDIA. A mano:
 
-    Baja PyTorch con CUDA y Chatterbox (~4 GB). La primera vez que arranque con
-    la voz activada descarga el modelo (~1 GB) y tarda un minuto más.
+        npm run deps:voice           (PyTorch con CUDA + Chatterbox, ~4 GB)
+        npm run models:download      (los pesos del modelo, ~2 GB)
 
-7.2 LA REFERENCIA
+7.2 LA REFERENCIA — VA INCLUIDA
 
-    npm run voice:build -- "C:\ruta\a\los\audios"
+    La voz que Nova clona está en el repo: core\nova\tts\voices\reference.wav
+    (34 s, mono, 24 kHz). Quien clone el repo la tiene sin copiar nada más:
+    NO hacen falta los audios originales, sólo ese WAV. (No se "entrena"
+    nada: el modelo copia el timbre de la referencia en cada frase; ver 7.5.)
+
+    Para clonar OTRA voz:
+
+        npm run voice:build -- "C:\ruta\a\los\audios"
 
     Junta los audios de la carpeta (ogg, mp3, wav…) en
-    %APPDATA%\Nova\voices\reference.wav. El modelo usa SÓLO los primeros 10
-    segundos (6 para el timbre), así que lo que importa es que empiece por el
-    mejor audio: voz limpia, sin música, sin susurros, hablando con
-    naturalidad. Un clip de 10-15 s de diálogo tranquilo vale más que un
-    minuto de líneas de combate.
+    %APPDATA%\Nova\voices\reference.wav, que gana sobre la del repo (y
+    NOVA_TTS_REFERENCE=ruta.wav en .env gana sobre las dos). El modelo usa los
+    primeros 10 s para el timbre fino y 15 para la prosodia, así que lo que
+    importa es que empiece por el mejor audio: voz limpia, sin música, sin
+    susurros, hablando con naturalidad. Un clip de 10-15 s de diálogo
+    tranquilo vale más que un minuto de líneas de combate.
 
 7.3 ACTIVAR
 
-    En .env:
-        NOVA_TTS_PROVIDER=chatterbox
+    Nada: el proveedor por defecto es "auto" (voz clonada si está instalada,
+    edge-tts si no) y con la voz clonada se habla inglés y se subtitula en
+    español solo. Para forzar una cosa u otra, en .env:
+        NOVA_TTS_PROVIDER=edge          (o chatterbox)
         NOVA_TTS_SPEAK_LANG=en
 
 7.4 QUÉ ESPERAR

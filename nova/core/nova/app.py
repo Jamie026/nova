@@ -93,20 +93,56 @@ def build_stt(config: Config):
     )
 
 
+def chatterbox_installed() -> bool:
+    """Sin importar nada: importar torch cuesta segundos y aquí sólo se decide."""
+    from importlib.util import find_spec
+
+    return find_spec("chatterbox") is not None and find_spec("torch") is not None
+
+
+def resolve_tts_provider(config: Config) -> str:
+    """auto → la voz clonada si está instalada (setup.ps1 la instala cuando hay
+    GPU NVIDIA), y si no, edge-tts. Así quien clona el repo tiene la voz sin
+    tocar el .env: la referencia va incluida (tts/voices/reference.wav)."""
+    provider = str(config.get("tts.provider", "auto") or "auto")
+    if provider == "xtts":     # .env antiguos: la voz clonada ahora es Chatterbox
+        provider = "chatterbox"
+    if provider != "auto":
+        return provider
+    return "chatterbox" if chatterbox_installed() else "edge"
+
+
+BUNDLED_REFERENCE = Path(__file__).parent / "tts" / "voices" / "reference.wav"
+
+
+def find_reference(config: Config) -> Path | None:
+    """La referencia de la voz, por orden: la configurada, la del usuario en
+    %APPDATA%/Nova/voices (npm run voice:build), y la incluida en el repo."""
+    from .paths import app_data_dir
+
+    candidates = [
+        Path(config.get("tts.reference")) if config.get("tts.reference") else None,
+        app_data_dir() / "voices" / "reference.wav",
+        BUNDLED_REFERENCE,
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    return None
+
+
 def build_tts(config: Config):
     if config.mock or config.get("tts.provider") == "mock":
         from .tts.mock_tts import MockTts
 
         return MockTts()
 
-    if config.get("tts.provider") in ("chatterbox", "xtts"):
-        # "xtts" se acepta por compatibilidad con .env antiguos: la voz clonada
-        # ahora es Chatterbox Turbo (ver tts/chatterbox_engine.py).
+    if resolve_tts_provider(config) == "chatterbox":
         engine = _build_chatterbox(config)
         if engine is not None:
             return engine
-        # Sin referencia no hay voz que clonar, pero quedarse mudo es peor que
-        # hablar con otra voz: se avisa y se sigue con edge-tts.
+        # Sin referencia o sin dependencia no hay voz que clonar, pero quedarse
+        # mudo es peor que hablar con otra voz: se avisa y se sigue con edge-tts.
 
     from .tts.edge_tts_engine import EdgeTts
 
@@ -117,19 +153,26 @@ def build_tts(config: Config):
     )
 
 
-def speak_language(config: Config) -> str:
-    """Idioma de la voz. Por defecto, el mismo que el de la interfaz."""
-    return config.get("tts.speak_language") or config.get("language", "es")
+def speak_language(config: Config, tts=None) -> str:
+    """Idioma de la VOZ. El configurado si lo hay; si no, inglés cuando habla
+    la voz clonada (Chatterbox Turbo sólo sabe inglés) y el de la interfaz en
+    cualquier otro caso. Se mira el motor construido, no el pedido: si la voz
+    clonada no pudo cargarse, edge-tts no tiene por qué hablar inglés."""
+    explicit = config.get("tts.speak_language")
+    if explicit:
+        return explicit
+    if tts is not None and type(tts).__name__ == "ChatterboxEngine":
+        return "en"
+    return config.get("language", "es")
 
 
 def _build_chatterbox(config: Config):
-    from .paths import app_data_dir
-
-    reference = Path(config.get("tts.reference") or app_data_dir() / "voices" / "reference.wav")
-    if not reference.is_file():
+    reference = find_reference(config)
+    if reference is None:
         log.error(
-            "voz clonada pedida pero no hay referencia en %s; sigo con edge-tts. "
-            "Créala con: npm run voice:build \"<carpeta con audios>\"", reference,
+            "voz clonada pedida pero no hay ninguna referencia (ni configurada, ni en "
+            "%%APPDATA%%/Nova/voices, ni la incluida en el repo en %s); sigo con edge-tts. "
+            "Créala con: npm run voice:build \"<carpeta con audios>\"", BUNDLED_REFERENCE,
         )
         return None
     try:
@@ -141,10 +184,12 @@ def _build_chatterbox(config: Config):
 
     return ChatterboxEngine(
         reference=reference,
-        language=speak_language(config),
+        language=config.get("tts.speak_language") or "en",
         device=config.get("tts.device", "auto"),
         output_device=config.get("audio.output_device") or None,
     )
+
+
 class NovaApp:
     def __init__(self, config: Config):
         self.config = config
@@ -200,7 +245,7 @@ class NovaApp:
             actions=self.actions, preferences=self.preferences,
             emit=self.ipc.broadcast, confirm=self._confirm, on_phase=self._set_phase,
             language=config.get("language", "es"),
-            speak_language=speak_language(config),
+            speak_language=speak_language(config, self.tts),
             max_steps=int(config.get("llm.max_steps", 8)),
             notes=self.notes,
         )

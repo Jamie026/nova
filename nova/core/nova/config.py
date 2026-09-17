@@ -122,23 +122,29 @@ DEFAULTS: dict[str, Any] = {
         "request_timeout_s": 60,
     },
     "tts": {
+        # "auto"        chatterbox si está instalado (setup.ps1 lo instala cuando
+        #               hay GPU NVIDIA); si no, edge. Es el valor por defecto para
+        #               que quien clone el repo tenga la voz sin tocar nada.
         # "edge"        voces neuronales de Microsoft; necesita red, ~1,3 s por respuesta
         # "chatterbox"  voz clonada en local sobre la GPU (Chatterbox Turbo, MIT)
-        #               a partir de tts.reference. Sólo inglés: con speak_language "en".
+        #               a partir de la referencia (ver app.find_reference). Sólo
+        #               inglés: speak_language pasa a "en" solo.
         # "mock"        sin audio
-        "provider": "edge",
+        "provider": "auto",
         "voice": "es-PE-CamilaNeural",
         "rate": "+8%",
         "volume": "+0%",
         # Idioma de lo que se DICE, cuando debe ser distinto del de la pantalla.
-        # Vacío = el mismo que `language`. Con "en", el modelo devuelve las dos
-        # versiones en una sola respuesta: se oye inglés y se lee español.
+        # Vacío = "en" con la voz clonada y el mismo que `language` con las
+        # demás. Con "en", el modelo devuelve las dos versiones en una sola
+        # respuesta: se oye inglés y se lee español.
         "speak_language": "",
         # --- sólo para "chatterbox" ---
-        # WAV de referencia del que se copia el timbre. Vacío =
-        # %APPDATA%/Nova/voices/reference.wav, que es donde lo deja
-        # `npm run voice:build <carpeta con audios>`. El modelo usa SÓLO los
-        # primeros 10 s (6 s para el timbre): que empiece por lo mejor.
+        # WAV de referencia del que se copia el timbre. Vacío = la del usuario
+        # en %APPDATA%/Nova/voices/reference.wav (la deja `npm run voice:build
+        # <carpeta con audios>`) y, si no existe, la incluida en el repo
+        # (nova/tts/voices/reference.wav). El modelo usa los primeros 10 s
+        # para el timbre fino: que empiece por lo mejor.
         "reference": "",
         "device": "auto",              # auto|cpu|cuda — en CPU es inviable
     },
@@ -224,6 +230,7 @@ _ENV_MAP = {
     "NOVA_TTS_VOICE": ("tts.voice", str),
     "NOVA_TTS_PROVIDER": ("tts.provider", str),
     "NOVA_TTS_SPEAK_LANG": ("tts.speak_language", str),
+    "NOVA_TTS_REFERENCE": ("tts.reference", str),
     "NOVA_LOG_LEVEL": ("dev.log_level", str),
 }
 

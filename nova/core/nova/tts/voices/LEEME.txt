@@ -1,0 +1,7 @@
+reference.wav es la voz que Nova clona (Chatterbox Turbo) cuando no hay otra.
+Orden de busqueda de la referencia (app.find_reference):
+  1. tts.reference en settings.json / NOVA_TTS_REFERENCE en .env
+  2. %APPDATA%\Nova\voices\reference.wav   (la tuya: npm run voice:build <carpeta>)
+  3. esta
+WAV mono, 24 kHz; mas de 5 s. El modelo usa los primeros 10 s para el timbre
+fino, 15 s para la prosodia y el archivo entero para la huella del hablante.
