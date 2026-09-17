@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self';" />
+    <title>Nova — ajustes</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="mark">nova</span>
+      <span class="state" id="state" data-state="IDLE"><span class="dot"></span><span id="state-text">Conectando</span></span>
+      <span class="spacer"></span>
+      <button type="button" id="wake">Despertar</button>
+      <button type="button" id="stop">Interrumpir</button>
+    </header>
+
+    <div class="body">
+      <nav class="rail" id="rail" aria-label="Secciones">
+        <button type="button" data-pane="voz" aria-current="true">Voz</button>
+        <button type="button" data-pane="modelo">Modelo</button>
+        <button type="button" data-pane="permisos">Permisos</button>
+        <button type="button" data-pane="avatar">Avatar y sistema</button>
+        <button type="button" data-pane="pruebas">Consola</button>
+      </nav>
+
+      <div class="panes">
+        <section class="pane" data-pane="voz" data-active="true">
+          <h2>Voz</h2>
+          <p class="lede">Los cambios de motor o de modelo se aplican al reiniciar el núcleo.</p>
+
+          <div class="field">
+            <label for="wake-engine">Detección de palabra</label>
+            <select id="wake-engine" data-path="wake.engine">
+              <option value="porcupine">Porcupine — local, ligero</option>
+              <option value="whisper">Transcripción local — sin registro</option>
+              <option value="off">Desactivada</option>
+            </select>
+            <p class="hint">Porcupine necesita una clave gratuita de Picovoice en el archivo .env.</p>
+          </div>
+          <div class="field">
+            <label for="wake-keyword">Palabra activadora</label>
+            <input type="text" id="wake-keyword" data-path="wake.keyword" />
+          </div>
+          <div class="field">
+            <label for="wake-sensitivity">Sensibilidad</label>
+            <input type="number" id="wake-sensitivity" data-path="wake.sensitivity" min="0" max="1" step="0.05" />
+            <p class="hint">Más alta detecta mejor pero se activa sola con más frecuencia.</p>
+          </div>
+          <div class="field">
+            <label for="stt-model">Modelo de transcripción</label>
+            <select id="stt-model" data-path="stt.model">
+              <option value="tiny">tiny — el más rápido</option>
+              <option value="base">base</option>
+              <option value="small">small — equilibrio recomendado</option>
+              <option value="medium">medium</option>
+              <option value="large-v3">large-v3 — el más preciso</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="stt-partials">Mostrar texto mientras hablo</label>
+            <input type="checkbox" id="stt-partials" data-path="stt.partials" />
+          </div>
+          <div class="field">
+            <label for="tts-voice">Voz</label>
+            <input type="text" id="tts-voice" data-path="tts.voice" />
+            <p class="hint">Cualquier voz de Microsoft Neural, por ejemplo es-PE-CamilaNeural o es-MX-JorgeNeural.</p>
+          </div>
+          <div class="field">
+            <label for="tts-rate">Velocidad de voz</label>
+            <input type="text" id="tts-rate" data-path="tts.rate" />
+            <p class="hint">Relativa al valor normal: +8%, -10%…</p>
+          </div>
+          <div class="field">
+            <label for="barge-in">Puedo interrumpirla al hablar</label>
+            <input type="checkbox" id="barge-in" data-path="session.barge_in" />
+          </div>
+          <div class="field">
+            <label for="follow-up">Conversación continua</label>
+            <input type="number" id="follow-up" data-path="session.follow_up_seconds" min="0" max="120" />
+            <p class="hint">Segundos que sigue escuchando sin repetir la palabra activadora.</p>
+          </div>
+          <div class="actions"><button type="button" class="primary" data-save>Guardar cambios</button></div>
+        </section>
+
+        <section class="pane" data-pane="modelo">
+          <h2>Modelo</h2>
+          <p class="lede">La clave de API se lee del archivo .env y nunca se guarda aquí.</p>
+          <div class="field">
+            <label for="llm-model">Modelo</label>
+            <input type="text" id="llm-model" data-path="llm.model" />
+          </div>
+          <div class="field">
+            <label for="llm-base">Servidor</label>
+            <input type="text" id="llm-base" data-path="llm.base_url" />
+            <p class="hint">Cualquier servidor compatible con la API de OpenAI: DeepSeek, Groq, Ollama…</p>
+          </div>
+          <div class="field">
+            <label for="llm-temp">Temperatura</label>
+            <input type="number" id="llm-temp" data-path="llm.temperature" min="0" max="2" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="llm-steps">Pasos máximos por tarea</label>
+            <input type="number" id="llm-steps" data-path="llm.max_steps" min="1" max="20" />
+            <p class="hint">Corta los bucles: si una tarea no termina en estos pasos, Nova lo dice y para.</p>
+          </div>
+          <div class="field">
+            <label for="memory-enabled">Recordar la conversación</label>
+            <input type="checkbox" id="memory-enabled" data-path="memory.enabled" />
+          </div>
+          <div class="actions"><button type="button" class="primary" data-save>Guardar cambios</button></div>
+        </section>
+
+        <section class="pane" data-pane="permisos">
+          <h2>Permisos</h2>
+          <p class="lede">Las acciones de riesgo alto piden confirmación siempre; eso no se puede desactivar.</p>
+          <div class="field">
+            <label for="risk-low">Acciones de riesgo bajo</label>
+            <select id="risk-low" data-path="security.low">
+              <option value="auto">Ejecutar directamente</option>
+              <option value="confirm">Pedirme confirmación</option>
+            </select>
+            <p class="hint">Abrir apps, buscar, cambiar de pestaña, subir el volumen.</p>
+          </div>
+          <div class="field">
+            <label for="risk-medium">Acciones de riesgo medio</label>
+            <select id="risk-medium" data-path="security.medium">
+              <option value="confirm">Pedirme confirmación</option>
+              <option value="auto">Ejecutar directamente</option>
+            </select>
+            <p class="hint">Cerrar programas con trabajo abierto, escribir en formularios, tocar el portapapeles.</p>
+          </div>
+          <div class="field">
+            <label for="confirm-timeout">Tiempo para responder</label>
+            <input type="number" id="confirm-timeout" data-path="security.confirm_timeout_s" min="5" max="300" />
+            <p class="hint">Si no respondes a tiempo, la acción se cancela.</p>
+          </div>
+          <div class="field">
+            <label for="tool-allowlist">Herramientas permitidas</label>
+            <input type="text" id="tool-allowlist" data-path="security.tool_allowlist" data-list />
+            <p class="hint">Separadas por comas. En blanco significa todas las registradas.</p>
+          </div>
+          <div class="field">
+            <label for="app-allowlist">Aplicaciones permitidas</label>
+            <input type="text" id="app-allowlist" data-path="security.app_allowlist" data-list />
+            <p class="hint">En blanco significa cualquier aplicación instalada.</p>
+          </div>
+          <div class="field">
+            <label for="control-enabled">Control directo del teclado y el ratón</label>
+            <input type="checkbox" id="control-enabled" data-path="control.enabled" />
+            <p class="hint">
+              Permite escribir, pulsar atajos, hacer clic y adjuntar archivos en otras aplicaciones.
+              Todas esas acciones son de riesgo alto y piden confirmación siempre. Al desactivarlo,
+              el modelo deja de verlas.
+            </p>
+          </div>
+          <div class="field">
+            <label for="search-roots">Carpetas donde puedo buscar archivos</label>
+            <input type="text" id="search-roots" data-path="files.search_roots" data-list />
+            <p class="hint">
+              Separadas por comas. En blanco usa tus carpetas de usuario (Escritorio, Documentos,
+              Descargas, Imágenes, Vídeos, Música y OneDrive). Fuera de aquí no puedo leer nada.
+            </p>
+          </div>
+          <div class="actions"><button type="button" class="primary" data-save>Guardar cambios</button></div>
+        </section>
+
+        <section class="pane" data-pane="avatar">
+          <h2>Avatar y sistema</h2>
+          <p class="lede">
+            Arrastra el avatar para moverlo; su posición se recuerda. Doble clic lo trae aquí.
+            Para devolverlo a una esquina, usa el menú del icono de la bandeja.
+          </p>
+          <div class="field">
+            <label for="avatar-skin">Aspecto</label>
+            <select id="avatar-skin" data-path="avatar.skin">
+              <option value="portrait">Retrato del personaje</option>
+              <option value="aperture">Apertura óptica (procedural)</option>
+            </select>
+            <p class="hint">El retrato no cambia de expresión: el estado se ve en el halo de color.</p>
+          </div>
+          <div class="field">
+            <label for="screen-output">Carpeta de capturas</label>
+            <input type="text" id="screen-output" data-path="screen.output_dir" />
+            <p class="hint">En blanco guarda en Imágenes\Nova.</p>
+          </div>
+          <div class="field">
+            <label for="avatar-scale">Tamaño del avatar</label>
+            <input type="number" id="avatar-scale" data-path="avatar.scale" min="0.5" max="2" step="0.1" />
+          </div>
+          <div class="field">
+            <label for="language">Idioma</label>
+            <select id="language" data-path="language">
+              <option value="es">Español</option>
+              <option value="en">Inglés</option>
+              <option value="pt">Portugués</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="browser-channel">Navegador</label>
+            <select id="browser-channel" data-path="browser.channel">
+              <option value="chrome">Chrome</option>
+              <option value="msedge">Edge</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="log-level">Detalle del registro</label>
+            <select id="log-level" data-path="dev.log_level">
+              <option value="INFO">Normal</option>
+              <option value="DEBUG">Desarrollador</option>
+              <option value="WARNING">Sólo avisos</option>
+            </select>
+          </div>
+          <div class="actions"><button type="button" class="primary" data-save>Guardar cambios</button></div>
+        </section>
+
+        <section class="pane" data-pane="pruebas">
+          <h2>Consola</h2>
+          <p class="lede">Escribe una orden como si la dijeras en voz alta. Recorre el mismo camino que la voz, sin usar el micrófono.</p>
+          <div class="console">
+            <input type="text" id="prompt" placeholder="abre spotify y pon música" autocomplete="off" />
+            <button type="button" class="primary" id="send">Enviar</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <section class="log" aria-label="Registro en vivo">
+      <header>
+        <span>Flujo en vivo</span>
+        <span class="spacer" style="flex:1"></span>
+        <button type="button" id="clear-log">Limpiar</button>
+      </header>
+      <div class="stream" id="stream"><p class="empty">Esperando actividad del núcleo…</p></div>
+    </section>
+
+    <script src="settings.js"></script>
+  </body>
+</html>

@@ -1,0 +1,132 @@
+:root {
+  --core: #f4f9ff;
+  --dim: rgba(244, 249, 255, 0.58);
+  --panel: rgba(8, 14, 22, 0.78);
+  --edge: rgba(120, 180, 255, 0.18);
+  --alert: #ff5e6c;
+  --accept: #3fe0b0;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  color: var(--core);
+  user-select: none;
+  cursor: default;
+}
+
+.stage {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  place-items: center;
+  padding: 4px 12px 14px;
+  gap: 6px;
+}
+
+/* El contenedor es vertical porque el retrato lo es (360x469). El skin
+   procedural se dibuja centrado dentro del mismo hueco, así que cambiar de
+   skin no mueve nada del resto de la interfaz. */
+.avatar {
+  width: 100%;
+  height: 100%;
+  min-height: 150px;
+  -webkit-app-region: drag;
+}
+
+.avatar canvas { width: 100%; height: 100%; display: block; }
+
+.readout {
+  width: 100%;
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  backdrop-filter: blur(14px);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.status[data-visible='true'] { opacity: 1; }
+
+.status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.transcript {
+  max-width: 320px;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--dim);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.75);
+  min-height: 0;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.transcript[data-visible='true'] { opacity: 1; }
+.transcript[data-final='true'] { color: var(--core); }
+
+.confirm {
+  width: 100%;
+  max-width: 320px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 94, 108, 0.45);
+  backdrop-filter: blur(16px);
+  display: none;
+  gap: 12px;
+  flex-direction: column;
+}
+
+.confirm[data-visible='true'] { display: flex; }
+.confirm p { font-size: 13.5px; line-height: 1.4; }
+.confirm .row { display: flex; gap: 8px; }
+
+.confirm button {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid var(--edge);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--core);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.confirm button:hover { background: rgba(255, 255, 255, 0.12); }
+.confirm button:focus-visible { outline: 2px solid var(--accept); outline-offset: 2px; }
+.confirm button[data-kind='approve'] { border-color: rgba(63, 224, 176, 0.55); }
+.confirm button[data-kind='deny'] { border-color: rgba(255, 94, 108, 0.55); }
+
+@media (prefers-reduced-motion: reduce) {
+  .status, .transcript { transition: none; }
+}

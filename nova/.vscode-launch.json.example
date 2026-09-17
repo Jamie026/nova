@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Núcleo (Python)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "nova.main",
+      "args": ["--log-level", "DEBUG"],
+      "cwd": "${workspaceFolder}/core",
+      "python": "${workspaceFolder}/core/.venv/Scripts/python.exe",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Núcleo en modo simulado",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "nova.main",
+      "args": ["--mock", "--log-level", "DEBUG"],
+      "cwd": "${workspaceFolder}/core",
+      "python": "${workspaceFolder}/core/.venv/Scripts/python.exe",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Interfaz (Electron)",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
+      "runtimeArgs": ["."],
+      "args": ["--dev"],
+      "env": { "NOVA_NO_CORE": "1" },
+      "preLaunchTask": "npm: build",
+      "outputCapture": "std"
+    }
+  ],
+  "compounds": [
+    { "name": "Nova completo", "configurations": ["Núcleo (Python)", "Interfaz (Electron)"] }
+  ]
+}

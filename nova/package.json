@@ -1,0 +1,40 @@
+{
+  "name": "nova-desktop",
+  "version": "0.1.0",
+  "description": "Agente de voz de escritorio en tiempo real",
+  "main": "dist/main/index.js",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron . --dev",
+    "dev:mock": "npm run build && cross-env NOVA_MOCK=1 electron . --dev",
+    "start": "electron .",
+    "core": "node scripts/py.js -m nova.main",
+    "core:mock": "node scripts/py.js -m nova.main --mock",
+    "core:text": "node scripts/py.js -m nova.main --text",
+    "test:core": "node scripts/py.js -m pytest -q",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "mic:check": "node scripts/py.js -m nova.audio.check",
+    "deps:core": "node scripts/py.js -m pip install -r requirements.txt",
+    "deps:voice": "node scripts/py.js -m pip install -r requirements-voice.txt",
+    "voice:build": "node scripts/py.js -m nova.tts.voice_profile",
+    "voice:train": "node scripts/py.js -m nova.tts.finetune",
+    "setup:win": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
+    "setup": "bash scripts/setup.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/ws": "^8.18.0",
+    "cross-env": "^7.0.3",
+    "electron": "^31.7.7",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.0",
+    "ws": "^8.18.0"
+  }
+}

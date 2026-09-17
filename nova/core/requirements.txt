@@ -1,0 +1,83 @@
+# Versiones con las que el proyecto está probado en Windows 11 / Python 3.13.
+# Los topes superiores no son decoración: cada uno está puesto porque la major
+# siguiente rompe algo concreto, y debajo se dice qué.
+
+# --- IPC y utilidades ---------------------------------------------------------
+# <14 es obligatorio: websockets 14 eliminó websockets.server.WebSocketServerProtocol,
+# que es lo que importa ipc/server.py. Subir de ahí exige reescribir el servidor
+# contra la API nueva (websockets.asyncio.server).
+websockets>=12.0,<14
+python-dotenv>=1.0,<2
+jsonschema>=4.21,<5
+numpy>=1.26,<3
+
+# --- Audio --------------------------------------------------------------------
+sounddevice>=0.5,<1
+# >=0.13 trae libsndfile con MP3 incluido, y eso es lo que permite decodificar
+# la salida del TTS sin instalar ffmpeg.
+soundfile>=0.13,<1
+webrtcvad-wheels>=2.0.14   # ruedas precompiladas; evita compilar C en Windows
+
+# --- Voz ----------------------------------------------------------------------
+# >=1.1 incluye el modelo Silero (assets/silero_vad_v6.onnx), que es lo que hace
+# funcionar vad_filter=True sin descargar nada. Ese filtro es a la vez la mitad
+# del ahorro de latencia y la defensa contra las alucinaciones de subtítulos.
+faster-whisper>=1.1,<2
+edge-tts>=7.0,<8
+
+# --- Palabra activadora -------------------------------------------------------
+# Dos motores, y Nova cae del primero al segundo sola:
+#   pvporcupine   el más barato (~1 % CPU), pero necesita PICOVOICE_ACCESS_KEY
+#   openwakeword  ~4,5 % CPU, sin clave ni registro; descarga 7 MB de modelos
+#                 ONNX la primera vez
+# Aviso de tamaño: openwakeword arrastra scipy y scikit-learn (~120 MB). Si no lo
+# quieres, quita esta línea y pon NOVA_WAKE_ENGINE=whisper en el .env.
+pvporcupine>=3.0.2,<5
+openwakeword>=0.6,<1
+
+# --- Aceleración por GPU (opcional, pero cambia la latencia de verdad) --------
+# Sin estas dos, CTranslate2 no puede usar la tarjeta y Whisper cae a CPU:
+# `small` pasa de ~0,3 s a ~1,7 s por frase, medido en un Ryzen 7 7445HS con
+# RTX 3050. Son CUDA 12 y cuDNN 9, que es lo que pide CTranslate2 4.x; se
+# instalan por pip, sin el toolkit de NVIDIA.
+# faster_whisper_stt._add_cuda_dll_dirs() las pone al alcance de Windows sin
+# tocar el PATH. Si no tienes GPU NVIDIA, pip las instala igual y no molestan,
+# pero puedes borrarlas para ahorrar ~1 GB.
+nvidia-cublas-cu12>=12.4 ; sys_platform == "win32"
+nvidia-cudnn-cu12>=9,<10 ; sys_platform == "win32"
+
+# --- Modelo -------------------------------------------------------------------
+# Cliente compatible usado contra api.deepseek.com.
+# Fijado a la serie 1.x a propósito: el proveedor está escrito contra esa API
+# (AsyncOpenAI + client.chat.completions.create + message.tool_calls). Sin el
+# tope, pip instala la última major, que puede haber cambiado esas firmas.
+openai>=1.40,<2
+
+# --- Automatización -----------------------------------------------------------
+playwright>=1.45,<2
+psutil>=5.9,<8
+pyperclip>=1.8,<2
+mss>=9.0,<11               # capturas por ctypes: ~15 ms y sin arrastrar Pillow
+
+# --- Windows ------------------------------------------------------------------
+pycaw>=20240210 ; sys_platform == "win32"
+comtypes>=1.4 ; sys_platform == "win32"
+
+# OCR de Windows 11 (el de la herramienta de recortes), para que Nova pueda leer
+# lo que hay en pantalla —«abre el segundo chat»— sin un modelo de visión que no
+# cabría en la GPU. Medido: 0,14 s por pantalla completa, sin descargar modelos.
+# Son los enlaces de Python/WinRT partidos por espacio de nombres.
+winrt-runtime>=3.2 ; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2 ; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.2 ; sys_platform == "win32"
+winrt-Windows.Globalization>=3.2 ; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=3.2 ; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=3.2 ; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2 ; sys_platform == "win32"
+
+# --- Desarrollo ---------------------------------------------------------------
+pytest>=8.0,<10
+# >=1.0 a propósito: core/pytest.ini usa asyncio_mode=auto y pytest-asyncio 1.x
+# retiró la fixture event_loop. Mezclar 0.x con esta configuración hace que las
+# pruebas async se recojan mal en vez de fallar claro.
+pytest-asyncio>=1.0,<2

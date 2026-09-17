@@ -1,0 +1,764 @@
+================================================================================
+NOVA — AGENTE DE VOZ DE ESCRITORIO
+Instrucciones de instalación y uso
+================================================================================
+
+Este archivo lo tiene todo: qué instalar, qué poner en el .env, qué ejecutar y
+qué hacer cuando algo falle. Si sólo lees una sección, lee la 2 y la 3.
+
+Sistema operativo: Windows 11 (también arranca en Windows 10).
+El núcleo es multiplataforma, pero el control de aplicaciones y del escritorio
+está implementado sólo para Windows por ahora.
+
+
+================================================================================
+1. LO QUE TIENES QUE INSTALAR ANTES
+================================================================================
+
+Tres cosas, en este orden. Si ya las tienes, salta al paso 2.
+
+1.1 PYTHON 3.10 O SUPERIOR
+    Descarga: https://www.python.org/downloads/
+    IMPORTANTE: en el instalador, marca la casilla "Add python.exe to PATH".
+    Es la casilla que casi todo el mundo olvida y es la causa número uno de que
+    el resto no funcione.
+
+    Comprobar que quedó bien (abre una terminal nueva):
+        python --version
+    Debe responder 3.10 o superior.
+
+1.2 NODE.JS 18 O SUPERIOR
+    Descarga: https://nodejs.org  (elige la versión LTS)
+
+    Comprobar:
+        node --version
+        npm --version
+
+1.3 GOOGLE CHROME
+    Si ya lo tienes, nada que hacer. Nova controla tu Chrome real, no una copia
+    aislada, así que tus sesiones iniciadas funcionan.
+
+NO hace falta instalar ffmpeg, Visual Studio Build Tools ni el toolkit de CUDA.
+Todas las dependencias tienen ruedas precompiladas para Windows, incluidas las
+librerías de CUDA: si tienes una GPU NVIDIA, requirements.txt instala por pip
+nvidia-cublas-cu12 y nvidia-cudnn-cu12 y Nova las encuentra sola.
+
+Con GPU, transcribir una frase tarda ~0,3 s. Sin GPU, ~1,5 s con el mismo modelo,
+así que Nova baja automáticamente a un modelo más pequeño para no hacerte
+esperar. Eso es lo único que cambia entre tener tarjeta y no tenerla.
+
+
+================================================================================
+2. INSTALACIÓN (una sola vez)
+================================================================================
+
+2.1 Descomprime el zip donde quieras. Ejemplo:  C:\\Users\\TuNombre\\nova
+    Evita rutas con acentos o caracteres raros si puedes.
+
+2.2 Abre PowerShell en esa carpeta.
+    Truco: en el Explorador, dentro de la carpeta nova, escribe "powershell" en
+    la barra de direcciones y pulsa Enter.
+
+2.3 Ejecuta el instalador:
+
+        powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1
+
+    Esto hace seis cosas, y tarda entre 5 y 15 minutos la primera vez:
+      - crea un entorno virtual de Python en core\\.venv
+      - instala las dependencias de Python (ahí va el grueso del tiempo)
+      - instala el navegador de Playwright
+      - descarga los modelos de la palabra activadora sin clave (7 MB)
+      - instala las dependencias de Electron (npm install)
+      - crea el archivo .env a partir de .env.example
+
+    Espacio en disco: unos 3,5 GB. Lo gordo son las librerías de CUDA (~1 GB,
+    sólo útiles si tienes GPU NVIDIA), el modelo de Whisper (~500 MB, que se baja
+    en el primer arranque) y el Chromium de Playwright. Si no tienes GPU NVIDIA,
+    borra las dos líneas nvidia-* de core\\requirements.txt antes de instalar.
+
+    Si PowerShell se queja de políticas de ejecución, el "-ExecutionPolicy
+    Bypass" del comando ya lo resuelve. No hace falta cambiar nada del sistema.
+
+    ¿Prefieres hacerlo a mano? Es esto:
+
+        cd core
+        python -m venv .venv
+        .\\.venv\\Scripts\\python.exe -m pip install --upgrade pip
+        .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt
+        .\\.venv\\Scripts\\python.exe -m playwright install chromium
+        cd ..
+        npm install
+        copy .env.example .env
+
+    Si más adelante cambian las dependencias de Python no hace falta repetir
+    todo esto: basta con
+
+        npm run deps:core
+
+    que instala requirements.txt en el venv correcto sin que tengas que acordarte
+    de la ruta del intérprete.
+
+
+================================================================================
+3. EL ARCHIVO .env — QUÉ PONER
+================================================================================
+
+Abre el archivo ".env" que está en la raíz del proyecto (no el .env.example) con
+el Bloc de notas o VS Code.
+
+3.1 OBLIGATORIO — LA CLAVE DE DEEPSEEK
+
+    DEEPSEEK_API_KEY=sk-tu_clave_aqui
+
+    Es la única línea imprescindible. Sin esto, Nova arranca pero no piensa.
+    Tu clave la sacas de https://platform.deepseek.com → API keys.
+    Pégala sin comillas y sin espacios alrededor del signo igual.
+
+3.2 MUY RECOMENDADO — LA PALABRA ACTIVADORA
+
+    PICOVOICE_ACCESS_KEY=tu_clave_de_picovoice
+    NOVA_WAKE_KEYWORD_PATH=C:\\ruta\\a\\nova_es_windows.ppn
+
+    Para qué sirve: detectar la palabra "Nova" gastando ~1% de CPU en reposo.
+    Es la opción más barata de las tres, pero no es la única, y las otras dos no
+    piden ninguna clave:
+
+      porcupine     ~1 % de CPU   palabra "Nova"        necesita AccessKey
+      openwakeword  ~4 % de CPU   "hey jarvis" y pocas  sin clave, sin registro
+      whisper       ~40 % de un   cualquier palabra     sin clave; el más caro
+                    núcleo
+
+    Si no pones la clave, Nova cae sola a openwakeword, que se descarga sus
+    modelos la primera vez (7 MB) y despierta cuando dices "hey Jarvis". Para
+    forzar uno u otro, en el .env:
+
+        NOVA_WAKE_ENGINE=openwakeword     (o porcupine, whisper, off)
+
+    El detector por transcripción (whisper) es el único que reconoce la palabra
+    "Nova" sin clave, pero decodifica audio todo el rato: es un último recurso,
+    no el modo recomendado para dejarla encendida el día entero.
+
+    Cómo conseguirla (es gratis y la clave aparece al instante; si te han
+    mandado a un formulario de "contacto con ventas", estabas en el registro
+    empresarial y no en el personal):
+      1. Regístrate en https://console.picovoice.ai con una cuenta personal
+      2. Copia tu AccessKey del panel → esa es PICOVOICE_ACCESS_KEY
+      3. Ve a "Porcupine" → crea una wake word con el texto "Nova"
+         → idioma español → plataforma Windows → descarga el archivo .ppn
+      4. Guarda el .ppn donde quieras y pon su ruta completa en
+         NOVA_WAKE_KEYWORD_PATH
+
+    Si pones la clave pero no el .ppn, Nova usa la palabra integrada "jarvis".
+    Si no pones ninguna de las dos, cae a openwakeword. Todas las opciones
+    funcionan; cambian el consumo de CPU y qué palabra reconocen.
+
+3.3 OPCIONALES — descoméntalos sólo si los necesitas
+
+    NOVA_STT_MODEL=small
+        Modelo de transcripción. Opciones: tiny, base, small, medium, large-v3.
+        "small" es el equilibrio bueno y es lo que se usa con GPU. Sin GPU,
+        Nova ignora esto y usa "tiny" (ajuste stt.cpu_model), porque "small" en
+        CPU tarda 1,7 s por frase y se nota muchísimo.
+        Con GPU y si quieres más precisión en nombres propios, "medium": pasa de
+        ~0,3 s a ~0,5 s y acierta cosas como "Discord" donde "small" oye "disco".
+
+    NOVA_TTS_VOICE=es-PE-CamilaNeural
+        Voz de la respuesta. Otras en español: es-PE-AlexNeural,
+        es-MX-DaliaNeural, es-ES-ElviraNeural, es-AR-ElenaNeural.
+
+    NOVA_MOCK=1
+        Arranca todo simulado, sin gastar API ni descargar modelos. Úsalo la
+        primera vez para comprobar que la interfaz funciona.
+
+    NOVA_NO_INPUT=1
+        Desactiva que Nova pueda usar el teclado y el ratón. Recomendado
+        mientras te acostumbras a cómo se comporta. Ver sección 8.
+
+    NOVA_LOG_LEVEL=DEBUG
+        Logs detallados cuando algo no funcione y quieras ver por qué.
+
+
+================================================================================
+4. CÓMO ARRANCARLO
+================================================================================
+
+Desde la carpeta nova, en PowerShell:
+
+    npm run dev:mock     ← EMPIEZA POR AQUÍ la primera vez
+
+        Arranca todo simulado. Sirve para comprobar en 10 segundos que el avatar
+        aparece y que la interfaz responde.
+
+        OJO, ESTO CONFUNDE: en modo simulado Nova NO TE ESCUCHA. Las frases que
+        aparecen transcritas ("abre el navegador y busca vuelos a cusco",
+        "abre spotify"...) son ejemplos en rotación, da igual lo que digas. No
+        está entendiéndote mal: no está oyéndote. Para probar el micrófono de
+        verdad, usa npm run dev.
+
+        La palabra activadora sí funciona en este modo, porque el detector usa
+        su propio modelo.
+
+    npm run dev          ← el modo de verdad
+
+        La primera vez que lo ejecutes descargará el modelo de Whisper
+        (unos 500 MB con el modelo "small"). Eso pasa una sola vez y tarda unos
+        minutos. Ten paciencia: parece colgado pero está descargando.
+
+Otros comandos disponibles:
+
+    npm run core         Sólo el núcleo Python, con los logs en la terminal.
+                         Útil para ver qué está pasando por dentro.
+    npm run test:core    Ejecuta las 100 pruebas.
+    npm run mic:check    SI NOVA NO TE OYE, EMPIEZA POR AQUÍ. Lista tus
+                         micrófonos, graba unos segundos del que use Nova y te
+                         dice con números qué falló: el nivel, la palabra
+                         activadora o la transcripción.
+    npm run deps:core    Reinstala las dependencias de Python en core\\.venv.
+    npm run deps:voice   Instala la voz clonada (PyTorch + XTTS). Ver §7.
+    npm run voice:build  Prepara el audio de referencia de la voz. Ver §7.
+    npm run typecheck    Revisa el TypeScript sin compilar.
+    npm run build        Compila el TypeScript.
+
+Una sola orden, sin interfaz ni micrófono (la forma más rápida de probar):
+
+    cd core
+    .\\.venv\\Scripts\\python.exe -m nova.main --text "abre spotify"
+
+
+================================================================================
+5. CÓMO SE USA
+================================================================================
+
+Di "Nova" y luego lo que quieras. El avatar aparece en la esquina inferior
+derecha mientras te escucha y desaparece solo cuando termina.
+
+Después de responder sigue escuchando unos 12 segundos por si continúas, así que
+no tienes que repetir "Nova" en cada frase de la misma conversación.
+
+ATAJOS DE TECLADO
+
+    Ctrl + Shift + Espacio    Despierta a Nova sin hablar
+    Ctrl + Shift + X          FRENO DE MANO: interrumpe lo que esté haciendo
+    Doble clic en el avatar   Abre los ajustes
+    Escape (sobre el avatar)  Cancela la confirmación pendiente
+
+EL AVATAR
+
+    - Arrástralo para moverlo donde quieras; recuerda la posición.
+    - Para devolverlo a una esquina: clic derecho en el icono de Nova en la
+      bandeja del sistema (junto al reloj) → "Esquina del avatar".
+    - El color del halo te dice qué está haciendo:
+        azul     en reposo
+        verde    escuchándote
+        violeta  pensando
+        ámbar    ejecutando algo
+        rojo     algo falló
+
+EJEMPLOS DE ÓRDENES QUE ENTIENDE
+
+    "Nova, abre Spotify"
+    "Nova, busca vuelos a Cusco en enero"
+    "Nova, cierra Chrome"
+    "Nova, sube el volumen al 30"
+    "Nova, busca la imagen que se llama corin"
+    "Nova, toma una captura de la ventana de Discord"
+    "Nova, busca la imagen corin y pégala en Discord"
+    "Nova, lee lo que dice esta página"
+
+Para el último tipo de orden — las que tocan archivos y otras aplicaciones —
+Nova te va a pedir confirmación. Lee lo que dice el cuadro antes de aceptar: te
+dice exactamente qué archivo, en qué aplicación y si lo va a enviar o sólo a
+dejar escrito.
+
+
+================================================================================
+6. LA PRIMERA PRUEBA QUE DEBERÍAS HACER
+================================================================================
+
+Para comprobar que el control del escritorio funciona de verdad, con Discord
+abierto y una imagen cualquiera en tu carpeta de Imágenes:
+
+    1. "Nova, busca la imagen que se llama <el nombre de tu imagen>"
+       → debe decirte dónde está.
+
+    2. "Nova, pégala en Discord sin enviarla"
+       → te pedirá confirmación. Acepta.
+       → la imagen debe quedar adjunta en la caja de texto de Discord, SIN
+         enviarse. Tú decides si la mandas.
+
+    3. "Nova, toma una captura de la ventana de Discord"
+       → el PNG aparece en tu carpeta Imágenes\\Nova.
+
+    4. "Nova, en Discord abre el chat con <alguien>"
+       → Discord salta a esa conversación (usa su buscador rápido, Ctrl+K).
+         No pregunta: abrir un chat se deshace abriendo otro.
+
+    5. "Nova, escribe hola qué tal y envíalo"
+       → te pregunta «¿Envío "hola qué tal" a <alguien> en Discord?». Aquí
+         decides tú: enviar un mensaje no se deshace, por eso pregunta siempre.
+       → CONTESTA EN VOZ ALTA: "sí" / "dale" / "vale" envía; "no" / "cancela" /
+         "espera" no. Puedes contestar encima de la pregunta, sin esperar a que
+         termine. El botón del panel sigue funcionando por si prefieres.
+       → Lo que no sea claramente un sí o un no se ignora y sigue esperando
+         (te lo dice en pantalla). Ante la duda, nunca es un sí: un "sí" mal
+         entendido manda un mensaje que no se deshace; un "no" mal entendido
+         sólo te obliga a repetir. Si pasan 30 s sin respuesta, se cancela.
+       → La pregunta la oyes en inglés (la voz clonada) con el mensaje en
+         español tal cual se va a enviar; en pantalla la ves en español.
+
+    6. Con Discord en la lista de mensajes directos: "Nova, abre el segundo chat"
+       → Nova lee la lista de chats de la pantalla, elige el segundo y hace
+         clic, sin preguntar. Probado
+         contra un Discord real: acierta la columna y el orden.
+
+Si los seis pasos funcionan, todo lo demás también. Abrir chats por nombre
+funciona en Discord, Slack y Telegram; en otras apps Nova te dirá que no sabe.
+
+
+================================================================================
+7. LA VOZ CLONADA (opcional)
+================================================================================
+
+Por defecto Nova habla con una voz neuronal de Microsoft (edge-tts): suena bien,
+no ocupa nada y necesita conexión. Si en vez de eso quieres que hable con *una voz
+concreta* —la de un personaje, la tuya, la que sea—, Nova puede clonarla en local
+con XTTS-v2. No entrena nada: le das unos segundos de esa voz y copia timbre,
+acento y entonación.
+
+    LO MÁS IMPORTANTE DE ESTA SECCIÓN: si la voz de referencia es inglesa,
+    deja que Nova HABLE en inglés y muestre los subtítulos en español.
+
+Hacer que una voz inglesa clonada hable español se puede, pero sale bastante peor,
+y no es opinión. Con la misma referencia, sintetizando doce frases y comparando
+cada una con su transcripción automática:
+
+    hablando inglés    fidelidad 0,90    1 frase mala de 12
+    hablando español   fidelidad 0,79    7 frases malas de 12
+
+Por eso Nova sabe separar las dos cosas: el modelo devuelve la respuesta en los
+dos idiomas de una sola vez, se dice la inglesa y se lee la española. No cuesta
+ni una llamada extra al modelo ni un segundo más de espera.
+
+7.1 QUÉ HACE FALTA
+
+    - Una GPU NVIDIA. En CPU tarda más de diez segundos por frase, o sea que no
+      sirve para un asistente.
+    - Unos 5 GB más de disco (PyTorch y el modelo).
+    - Entre 6 y 20 segundos de voz limpia. No hacen falta horas: es clonado
+      zero-shot, no entrenamiento.
+
+7.2 INSTALACIÓN
+
+        npm run deps:voice
+
+    Baja PyTorch con CUDA y coqui-tts. Tarda un rato largo la primera vez.
+
+7.3 PREPARAR LA VOZ DE REFERENCIA
+
+    Mete los audios en una carpeta (.ogg, .wav, .mp3, .flac, .m4a, .opus) y:
+
+        npm run voice:build -- "C:\\ruta\\a\\tus\\audios"
+
+    El guion doble antes de la ruta es de npm, no de Nova: sin él, npm se queda
+    el argumento.
+
+    Esto elige los mejores clips, les quita el silencio, los iguala de volumen y
+    escribe %APPDATA%\\Nova\\voices\\reference.wav. Te dice cuáles entraron.
+
+    Elige por duración de mayor a menor, y hay un motivo: en material de
+    videojuego los gritos de combate son cortos y el diálogo tranquilo es largo,
+    así que ordenar por duración separa uno de otro sin etiquetar nada. Si aun
+    así se cuela algún grito, descártalo por nombre:
+
+        npm run voice:build -- "C:\\ruta" --excluir Attack Dodge Encounter
+
+    Esto es lo que más decide el resultado. Un clip gritando en la referencia
+    hace que Nova te conteste la hora a gritos.
+
+7.4 ACTIVARLA
+
+    En el .env, las dos líneas:
+
+        NOVA_TTS_PROVIDER=xtts
+        NOVA_TTS_SPEAK_LANG=en
+
+    La primera cambia el motor de voz. La segunda dice en qué idioma HABLA; los
+    subtítulos siguen en el idioma de `language` (español). Si quitas la segunda,
+    Nova hablará español con la voz clonada y se le notará bastante.
+
+    O en %APPDATA%\\Nova\\settings.json:
+        "tts": { "provider": "xtts", "speak_language": "en" }
+
+    Si no encuentra la referencia, avisa en el log y sigue con edge-tts: no se
+    queda muda.
+
+    Ajustes que puedes tocar en settings.json:
+        tts.speed         1.0 por defecto; 0.9 habla más despacio
+        tts.temperature   0.65; más alto = más variación de entonación entre
+                          respuestas. Por encima de 0,8 se inventa énfasis raros.
+
+7.5 LA VOZ NO "APRENDE" MIENTRAS LA USAS — Y ENTRENARLA CON POCO AUDIO LA EMPEORA
+
+    Parece que al principio suena peor y luego mejora. No es que aprenda: el
+    clonado zero-shot copia la referencia y no cambia con el uso. Lo que pasa
+    es que las primeras respuestas suelen ser cortas y las cortas se parecen
+    menos a la referencia que las largas; eso está medido.
+
+    Lo único que la mejoraría de verdad es ENTRENAR el modelo con esa voz. Está
+    montado y cabe en una GPU de 6 GB (lote de 1, bf16, sólo las últimas capas):
+
+        npm run voice:train -- "C:\ruta\a\audios\reales"
+
+    Tarda ~5 minutos por cada minuto de audio. Deja el modelo en
+    %APPDATA%\Nova\voices\finetuned y se activa con
+        "tts": { "model_path": "C:/Users/.../Nova/voices/finetuned" }
+
+    Si el audio viene de un vídeo con música o efectos debajo (un "Quality
+    Time" de juego, un tráiler), sepáralo antes; entrenar con música enseña al
+    modelo a meter música:
+
+        core\.venv\Scripts\python -m demucs --two-stems=vocals -n htdemucs -d cuda -o "C:\salida" "C:\ruta\video.mp3"
+
+    Deja C:\salida\htdemucs\<nombre>\vocals.wav: ése es el que se mete en la
+    carpeta de entrenamiento, no el mp3 original. Demucs se instala con
+    npm run deps:voice.
+
+    PERO —y esto está medido con el mismo método objetivo de siempre, mismas
+    frases y mismas semillas para los dos— con 3,4 minutos de audio real (los
+    26 clips + Dialogue.mp3 + el vídeo "Quality Time" con la música quitada,
+    70 frases) NINGUNA variante supera al zero-shot:
+
+        zero-shot                        parecido 0,595   se entiende 0,93
+        sólo la ruta de la voz           parecido 0,574   se entiende 0,92
+        + últimas 8 capas del GPT        parecido 0,547   se entiende 0,80
+        ídem con pasos más pequeños      parecido 0,489   se entiende 0,57
+
+    Tocar el GPT rompe el habla ("T-T-Ten-Ses") por cómo está hecho XTTS —el
+    vocoder lee el estado interno del GPT, no lo que la pérdida vigila—, no
+    por falta de datos. Y la única parte que se puede entrenar sin romper nada
+    (la que convierte la referencia en identidad de voz) con este audio no
+    mejora nada medible. Por eso `model_path` sigue vacío.
+
+    Lo que SÍ cambia la voz que oyes es la referencia (7.2): mejor referencia,
+    mejor clon. Y no vale generar audio con la propia voz clonada para
+    "rellenar": es fotocopiar una fotocopia, no hay más información de la voz
+    real que la que ya está en la referencia.
+
+    Para escucharlo tú mismo: %APPDATA%\Nova\voices\cmp_base_1..5.wav contra
+    cmp_ajustado_1..5.wav, mismas frases, mismas semillas.
+
+7.6 LA VOZ DEBE SONAR COMO LAS MUESTRAS
+
+    Nova sintetiza la respuesta ENTERA de una vez (tts.chunking = "whole"). Es
+    como se generaron las muestras que aprobaste. Se probó trocear la respuesta
+    en fragmentos para que empezara a sonar antes, y la voz cambiaba: parecido
+    con la referencia 0,66 entera frente a 0,54 troceada. XTTS necesita la frase
+    completa para fijar el timbre. El precio: la voz tarda ~0,55 s por cada
+    segundo de audio en empezar (1,5 s en una respuesta corta, 4-5 en una larga).
+    Si prefieres rapidez a parecido: "tts": { "chunking": "streaming" }.
+
+7.7 LO QUE CUESTA
+
+    El modelo tarda ~70 s en subir a la GPU, pero NO tienes que esperarlo: Nova
+    queda en escucha a los ~8 s de siempre y la voz termina de cargarse por
+    detrás. Si le hablas antes de que esté lista, la primera respuesta espera lo
+    que le quede; a partir de ahí, nada.
+
+    La voz empieza a sonar entre 0,6 y 1,2 s después de que el modelo responda,
+    y ya no depende de internet. Medido en un turno completo: unos 2,6 s desde
+    que callas hasta que la oyes en una respuesta corta, 4 s en una larga. Si te arrepientes, vuelve
+    a comentar las dos líneas del .env con una almohadilla delante y tienes la
+    voz de Microsoft otra vez.
+
+    De vez en cuando —medido: 1 de cada 40 frases— XTTS se atasca y repite la
+    primera palabra. Nova lo detecta sola, porque el audio sale al doble de largo
+    de lo que debería, y lo sintetiza otra vez antes de que llegue al altavoz. En
+    el log aparece como "la voz se atascó en ...; reintento".
+
+7.8 LO LEGAL
+
+    Si los audios son de un personaje, esa voz es de un actor real y tiene
+    derechos. Para tu escritorio, igual que el retrato del avatar. Para
+    distribuir la aplicación, no. Además, el modelo XTTS-v2 tiene licencia CPML,
+    que es explícitamente no comercial.
+
+
+================================================================================
+8. SEGURIDAD — LÉELO, SON DOS MINUTOS
+================================================================================
+
+Nova puede escribir con tu teclado, hacer clic con tu ratón y adjuntar archivos
+en tus aplicaciones. Eso es potente y es peligroso. Esto es lo que hay puesto
+para que no se te vaya de las manos:
+
+    - Escribir, pulsar atajos, hacer clic y adjuntar archivos SIEMPRE piden
+      confirmación. No se puede desactivar esa confirmación. Es a propósito.
+
+    - Nova sólo puede leer archivos dentro de tus carpetas de usuario
+      (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música y OneDrive).
+      Cualquier ruta fuera de ahí se rechaza aunque el modelo la pida.
+
+    - Nova NO puede borrar, mover ni renombrar archivos. No están esas
+      herramientas. Abrir el archivo equivocado es una molestia; borrarlo no
+      tiene vuelta atrás.
+
+    - Ctrl+Shift+X aborta en cualquier momento. Y si empieza a escribir donde no
+      debe, escribir tú o mover el ratón gana: Nova no bloquea tu entrada.
+
+    - Si quieres desactivar el teclado y el ratón del todo, pon esto en el .env:
+          NOVA_NO_INPUT=1
+      O desmárcalo en Ajustes → Permisos → "Control directo del teclado y el
+      ratón". Con eso el modelo ni siquiera ve esas herramientas.
+
+Recomendación honesta: usa NOVA_NO_INPUT=1 durante los primeros días, hasta que
+veas cómo responde a tus órdenes. El resto de capacidades (abrir apps, navegador,
+buscar archivos, capturas) siguen funcionando igual.
+
+
+================================================================================
+9. SI ALGO FALLA
+================================================================================
+
+"python no se reconoce como comando"
+    No marcaste "Add python.exe to PATH" al instalar. Reinstala Python marcando
+    esa casilla, o añade Python al PATH a mano.
+
+"npm no se reconoce como comando"
+    Falta Node.js, o no reiniciaste la terminal después de instalarlo. Cierra
+    PowerShell y ábrelo de nuevo.
+
+El avatar no aparece
+    Mira la terminal donde lanzaste npm run dev. Si dice algo de "núcleo
+    terminado", el problema está en Python. Arranca sólo el núcleo con
+    "npm run core" para ver el error completo.
+
+Tarda en contestar, o a veces se queda muda
+    Cada turno deja en %APPDATA%\Nova\logs\nova-<fecha>.jsonl una línea así:
+        turno: modelo 1.4 s · primer audio a 1.9 s · voz adelantada
+    "modelo" es lo que tardó DeepSeek (es red: depende de tu conexión);
+    "primer audio" es cuándo empezó a sonar desde que dejaste de hablar. Lo
+    normal es que el audio empiece ~0,5 s después de que el modelo cierre la
+    línea en inglés, sin esperar al subtítulo ("voz adelantada"). Si no pone
+    "voz adelantada", el modelo se saltó el formato EN:/ES: y la voz esperó a
+    la traducción. Si "primer audio" es -1, no sonó nada: mira justo encima si
+    hay un "fallo de síntesis" o si el turno se cortó porque hablaste encima.
+    Y "la voz se atascó" sin "reintento" es sólo un aviso: en las frases
+    largas el audio ya está sonando y no se repite.
+
+"No encuentro el micrófono" o no te escucha
+    Windows → Configuración → Privacidad → Micrófono → permite el acceso a las
+    aplicaciones de escritorio. Luego, en los ajustes de Nova, elige el
+    dispositivo correcto.
+
+"hay GPU pero faltan las librerías de CUDA; se usará la CPU"
+    Tienes tarjeta NVIDIA pero no las librerías que necesita CTranslate2. No es
+    un detalle: con GPU una frase se transcribe en ~0,3 s y sin ella en ~1,5 s.
+    Se arregla sin instalar el toolkit de NVIDIA:
+
+        cd core
+        .\.venv\Scripts\python.exe -m pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12>=9,<10"
+
+    Nova añade sola esas carpetas al buscador de DLL de Windows, así que no hay
+    que tocar el PATH. Para forzar la CPU a propósito: NOVA_STT_DEVICE=cpu.
+
+Cambié la palabra activadora y sigue respondiendo a la anterior
+    Ya no pasa: al guardar desde el panel, la palabra nueva se aplica al momento
+    (el panel te lo confirma: "Aplicado ya: palabra activadora «corrin»"). Lo que
+    sí necesita reiniciar es cambiar de voz o de modelo.
+
+    Puedes poner varias separadas por comas: "corrin, nova". Y ayuda que la
+    palabra sea de dos sílabas y termine en consonante o vocal clara: "Corrin"
+    se reconoce mejor que "Nova", que Whisper parte en "no va".
+
+No despierta, o no entiende lo que le digo
+    Ejecuta esto antes que nada:
+
+        npm run mic:check
+
+    Te lista los micrófonos, graba seis segundos y te dice en cuál de las tres
+    etapas se rompió la cadena. Lo más común, con diferencia, es que Windows esté
+    usando un micrófono distinto del que tú crees: en un portátil suele haber tres
+    o cuatro entradas (el array integrado, el de la webcam, la "Mezcla estéreo"
+    que graba lo que suena en los altavoces...). Si el nivel sale MUDO o MUY BAJO,
+    el problema es ése y no Nova.
+
+    Para fijar el micrófono correcto, en %APPDATA%\\Nova\\settings.json:
+
+        "audio": { "input_device": 16 }
+
+    usando el número que te dio mic:check.
+
+    Si el nivel está bien y aun así no despierta, mira en el log qué motor arrancó. Si dice "openWakeWord", la palabra
+    ya no es "Nova" sino "hey Jarvis": es el motor sin clave que reconoce sólo
+    unas pocas palabras fijas. Para volver a "Nova" sin clave, NOVA_WAKE_ENGINE=
+    whisper (gasta más CPU), o saca la clave de Picovoice (ver 3.2).
+
+    OJO CON "HEY JARVIS" SI HABLAS ESPAÑOL. El modelo está entrenado con
+    pronunciación inglesa, y la J cambia mucho la cosa. Medido con la misma
+    frase dicha de seis maneras:
+
+        inglés nativo ........... 0,993   despierta
+        "Éi JARvis" (J inglesa) . 0,888   despierta
+        "Ey YARvis" ............. 0,452   NO despierta
+        "Ey JÁRvis" (J española)  0,220   NO despierta
+
+    El umbral está en 0,5. Si dices "Jarvis" con J española, no llegará nunca,
+    por mucho que grites. Tres salidas, de menos a más esfuerzo:
+
+      1. Pronúncialo a la inglesa: "yei YAR-vis", con la J de "Jessica".
+      2. Baja el umbral si mic:check dice que te quedaste cerca:
+         "wake": { "oww_threshold": 0.35 }  en settings.json.
+      3. Vuelve a la palabra "Nova", que sí reconoce el español:
+             NOVA_WAKE_ENGINE=whisper     en el .env
+         Ese detector transcribe en vez de comparar huellas, así que entiende
+         "Nova" aunque Whisper lo oiga como "no va". Gasta más, pero desde que
+         usa la GPU la carga bajó del 115 % de un núcleo al 25 %.
+
+    Con el detector por transcripción, Nova reconoce la palabra transcribiendo. En español
+    Whisper oye "Nova" como "no va" muy a menudo, y eso ya está contemplado. Si
+    aun así no despierta:
+      - habla un poco más fuerte y separado del micrófono
+      - arranca con NOVA_LOG_LEVEL=DEBUG y mira en la consola las líneas
+        "spotter oyó: ..." — ahí ves exactamente qué está entendiendo
+      - mientras tanto, despiértala con Ctrl+Shift+Espacio
+    La solución definitiva son los 5 minutos de la clave de Picovoice (ver 3.2).
+
+Error al hablar con DeepSeek, o algo tipo "AsyncOpenAI ... unexpected keyword"
+    El cliente de OpenAI cambió de versión mayor. El proyecto está escrito contra
+    la serie 1.x y requirements.txt ya la fija, pero si instalaste antes de ese
+    arreglo tendrás una versión más nueva. Se corrige así:
+
+        cd core
+        .\.venv\Scripts\python.exe -m pip install "openai>=1.40,<2"
+
+Me corta antes de terminar la frase / responde a media frase
+    Nova decide que has terminado tras 800 ms de silencio (vad.end_ms). Si haces
+    pausas largas para pensar, súbelo en settings.json:
+        "vad": { "end_ms": 1200 }
+    Cada 100 ms ahí son 100 ms más de espera con la boca cerrada, así que si
+    hablas rápido y seguido puedes bajarlo a 500 y ganar tres décimas por frase.
+
+
+Dice "listo, lo hice" y no ha hecho nada
+    Pasó: "abre mi primer chat" → "Listo, abrí tu primer chat" sin haber llamado
+    a ninguna herramienta. Ahora, si el modelo afirma una acción («abrí»,
+    «envié», «done») en un turno en el que no ejecutó nada, se le devuelve la
+    respuesta con un aviso y tiene que elegir: llamar a la herramienta o
+    reconocer que no puede. Además las herramientas de chat comprueban el
+    resultado: si tras buscar a alguien la ventana de Discord sigue en "Amigos",
+    dicen "no encontré a nadie con ese nombre" en vez de "lo envié".
+
+    Para "el segundo chat", "el de arriba", "ese botón": Nova lee la pantalla
+    con el OCR de Windows (read_screen) y hace clic en la línea que corresponda
+    (click_item).
+
+    PERMISOS. Tu settings.json tiene "security": { "medium": "auto", "high":
+    "auto" }: Nova no pregunta nada de lo que pasa dentro de tu máquina (abrir,
+    cerrar, escribir, hacer clic, leer la pantalla). Lo ÚNICO que sigue
+    preguntando, y no se puede desactivar, es lo que sale hacia otra persona:
+    enviar un mensaje o un archivo. Eso no se deshace y le llega a alguien que
+    no configuró Nova. Si quieres volver a que pregunte más, pon "confirm".
+
+Nova se interrumpe sola / responde a cosas que no dije
+    El micrófono del portátil oye los altavoces del portátil. Si Nova corta su
+    propia respuesta y luego "entiende" basura ("¡Suscríbete!", "Con."), es su
+    voz volviendo por el micrófono. Ya hay dos defensas: para interrumpirla hace
+    falta hablar por encima de un volumen mínimo (session.barge_in_min_level,
+    0.04) y durante 400 ms seguidos. Si aun así se interrumpe sola, sube el
+    nivel a 0.06 en settings.json; si usas auriculares, puedes bajarlo a 0.01;
+    y si no quieres interrumpirla nunca, "session": { "barge_in": false }.
+
+Entiende mal los nombres de aplicaciones o de personas
+    Son palabras que no suenan a español: el punto exacto donde Whisper falla.
+    Tres cosas ayudan, y las tres están puestas:
+      - El modelo de transcripción es ahora "medium", que acierta "Discord"
+        donde "small" oía "disco". Cuesta dos décimas más por frase.
+      - Nova le pasa a Whisper una lista de aplicaciones y carpetas como pista.
+        AÑADE AHÍ LAS PERSONAS A LAS QUE ESCRIBES: "Alain Ryan" dicho al
+        micrófono no se parece a nada que Whisper conozca si no se lo dices.
+      - Comprueba con mic:check que no estés AL BORDE DEL RECORTE.
+    Si usas programas o contactos que no están en la lista, añádelos en %APPDATA%\\Nova\\settings.json:
+
+        "stt": { "initial_prompt": "Órdenes para un asistente de escritorio en Windows. Aplicaciones: Spotify, Discord, Chrome, Krita. Contactos: Alain Ryan, Jorge, Mamá." }
+
+    Y comprueba con mic:check que tu micrófono no esté AL BORDE DEL RECORTE: la
+    distorsión es lo que más confunde a Whisper con los nombres propios.
+
+
+Nova olvida lo que le digo entre sesiones
+    Ya no. Lo que le digas con "recuerda que…", "a partir de ahora…", "prefiero…"
+    o corrigiéndola ("no, en Opera") lo guarda en %APPDATA%\Nova\memory.json y lo
+    lee en cada turno de cada sesión. "Olvida…" lo borra. Puedes editar ese
+    archivo a mano: es una lista de frases. Máximo 60; cuando se llena, cae la
+    que lleve más tiempo sin usarse.
+
+No abre las páginas en mi navegador / abre otro navegador
+    Ahora usa el navegador que tengas abierto (Opera, Chrome, Edge, Firefox) por
+    teclado: "abre YouTube" va a la pestaña actual, con tus sesiones. Lo que no
+    puede hacer así es leer la página o pulsar por nombre; para eso usa
+    read_screen y click_item. Si prefieres el Chrome propio de Nova, que sí lo
+    puede: "browser": { "mode": "cdp" }.
+
+Se queda "pensando" y no responde
+    Suele ser la clave de DeepSeek: mal pegada, con espacios, o sin saldo.
+    Compruébala arrancando con "npm run core" y mirando el error.
+
+La primera vez tarda muchísimo en arrancar
+    Es normal: está descargando el modelo de Whisper. Sólo pasa la primera vez.
+    Si quieres que sea más rápido, pon NOVA_STT_MODEL=tiny en el .env.
+
+El navegador no responde a las órdenes
+    Nova necesita lanzar Chrome ella misma la primera vez, con un perfil aparte
+    (en %APPDATA%\\Nova\\chrome-profile). Cierra todas las ventanas de Chrome y
+    pídele a Nova que abra algo en el navegador.
+
+Nova no encuentra un archivo que sabes que existe
+    Comprueba que está dentro de tus carpetas de usuario. Si lo tienes en otro
+    disco, añade esa carpeta en Ajustes → Permisos → "Carpetas donde puedo
+    buscar archivos".
+
+Los logs completos están en:
+    %APPDATA%\\Nova\\logs
+
+
+================================================================================
+10. CAMBIAR EL AVATAR
+================================================================================
+
+La imagen está en:
+    desktop\\src\\renderer\\overlay\\assets\\nova-avatar.webp
+
+Sustitúyela por cualquier PNG o WEBP con fondo transparente, con el mismo
+nombre, y listo. Funciona mejor si la figura es vertical y está recortada.
+
+Si además quieres cambiar el icono de la bandeja del sistema:
+    pip install pillow
+    python scripts\\make-tray-icon.py
+
+En Ajustes → Avatar puedes volver al avatar procedural (el círculo de luz) si
+prefieres algo sin imagen.
+
+
+================================================================================
+11. DÓNDE ESTÁ CADA COSA
+================================================================================
+
+    README.md                 Resumen del proyecto
+    docs\\ARQUITECTURA.md      Por qué cada pieza es la que es. Léelo si vas a
+                              modificar algo o si tienes que sustentarlo.
+    .env                      Tus claves (no lo subas a ningún repositorio)
+    core\\                     El núcleo en Python: toda la lógica del agente
+    core\\nova\\tools\\          Las herramientas que el agente puede usar
+    core\\tests\\               Las 51 pruebas
+    desktop\\src\\              La interfaz en Electron: avatar, ajustes, bandeja
+    scripts\\                  Instalador y utilidades
+
+Configuración guardada del usuario:
+    %APPDATA%\\Nova\\settings.json       ajustes del panel
+    %APPDATA%\\Nova\\logs\\               registros
+    Imágenes\\Nova\\                     capturas de pantalla
+
+
+================================================================================
+FIN
+================================================================================

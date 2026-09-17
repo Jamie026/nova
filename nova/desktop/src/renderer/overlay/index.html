@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <!-- img-src 'self' es necesario para el retrato del avatar; sigue sin
+         permitirse cargar nada remoto ni ejecutar scripts en línea. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
+    <title>Nova</title>
+    <link rel="stylesheet" href="overlay.css" />
+  </head>
+  <body>
+    <main class="stage">
+      <div class="avatar" id="avatar-host" title="Arrastra para mover a Nova">
+        <canvas id="avatar"></canvas>
+      </div>
+
+      <div class="readout">
+        <p class="transcript" id="transcript"></p>
+        <span class="status" id="status"><span class="dot"></span><span id="status-text"></span></span>
+        <section class="confirm" id="confirm" role="alertdialog" aria-live="assertive">
+          <p id="confirm-text"></p>
+          <div class="row">
+            <button type="button" data-kind="approve" id="confirm-yes">Sí, adelante</button>
+            <button type="button" data-kind="deny" id="confirm-no">Cancelar</button>
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="avatar.js"></script>
+    <script src="portrait.js"></script>
+    <script src="overlay.js"></script>
+  </body>
+</html>

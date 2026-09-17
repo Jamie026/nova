@@ -1,0 +1,370 @@
+"""Configuración centralizada.
+
+Tres capas, la última gana:
+  1. DEFAULTS (este archivo)
+  2. settings.json en la carpeta de datos del usuario (lo edita el panel de ajustes)
+  3. variables de entorno (.env) — sólo para secretos y overrides puntuales
+
+Se usa un dict con acceso por ruta ("stt.model") en lugar de dataclasses anidadas
+porque el panel de ajustes envía parches parciales y así el merge es trivial.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import os
+from typing import Any
+
+from .paths import settings_file
+
+DEFAULTS: dict[str, Any] = {
+    "language": "es",
+    "ipc": {"host": "127.0.0.1", "port": 8765},
+    "wake": {
+        # "porcupine"    local, ~1 % CPU, necesita clave gratuita de Picovoice
+        # "openwakeword" local, ~2 % CPU, sin clave ni registro (palabras fijas)
+        # "whisper"      sin clave, reconoce cualquier palabra, es el que más gasta
+        # "off"          sólo Ctrl+Shift+Espacio
+        # El orden de caída es porcupine → openwakeword → whisper: siempre queda
+        # algo que funcione aunque falten claves o modelos.
+        "engine": "porcupine",
+        "keyword": "nova",
+        # .ppn generado en console.picovoice.ai; si falta se cae a un keyword integrado
+        "keyword_path": "",
+        "builtin_fallback": "jarvis",
+        "sensitivity": 0.6,
+        # openwakeword: modelos preentrenados disponibles sin registro. No hay
+        # uno de "nova"; "hey_jarvis" es el que mejor le pega a este proyecto.
+        "oww_model": "hey_jarvis",
+        "oww_threshold": 0.5,
+        # Spotter por Whisper. Es el único de los tres que reconoce la palabra
+        # "Nova" dicha en español, y por eso importa que sea usable.
+        #
+        # El valor por defecto era "cpu" por ahorrar batería, y estaba mal: medido
+        # aquí, una ventana con voz cuesta tanto en CPU que el spotter llega al
+        # 115 % de carga —o sea que no da abasto y se le escapan activaciones—.
+        # En GPU la misma ventana se queda en el 25 %. Si prefieres la batería,
+        # pon "cpu" a mano y asume que se le escapará alguna.
+        "model": "tiny",
+        "device": "auto",              # auto|cpu|cuda
+        "window_ms": 1200,
+        "threshold": 0.72,
+    },
+    "audio": {
+        # Índice del micrófono. null = el predeterminado de Windows, que no
+        # siempre es el que crees: los portátiles suelen traer el de la webcam
+        # además del integrado. `npm run mic:check` lista los índices.
+        "input_device": None,
+        "output_device": None,
+    },
+    "vad": {
+        "aggressiveness": 2,           # 0-3, webrtcvad
+        "start_ms": 150,               # voz continua para considerar "empezó a hablar"
+        # Silencio para dar la frase por terminada. Es un compromiso entre dos
+        # cosas que el usuario quiere a la vez: que no le corte y que responda
+        # rápido. Cada 100 ms aquí son 100 ms de espera con la boca cerrada,
+        # pero por debajo de lo que dura una pausa natural, Nova responde a media
+        # frase. Con 450 ms, a alguien que habla despacio le cortaba «¿puedes
+        # abrir Discord?» en «…abrir Discord» y Whisper oía «Esaurir Discord».
+        # 800 ms aguanta pausas para pensar; si hablas rápido y seguido, baja a
+        # 500 y ganas tres décimas por frase.
+        "end_ms": 800,
+        # Cuánto audio anterior al inicio de voz se conserva. El VAD tarda
+        # `start_ms` en decidir que alguien está hablando, y sin este colchón esa
+        # parte —la primera sílaba— se pierde. 400 ms cubre `start_ms` con margen
+        # de sobra y no cuesta nada: son 12 KB de memoria.
+        "preroll_ms": 400,
+        "max_utterance_ms": 20000,
+    },
+    "stt": {
+        "provider": "faster-whisper",  # | "mock"
+        # `medium` y no `small`, porque la precisión con nombres propios es lo
+        # que más se nota en uso: `small` oye «disco» donde `medium` oye
+        # «Discord», y «Corine» donde «Corin». Cuesta 0,43 s por frase frente a
+        # 0,25 (medido en GPU) y 1,2 GB de VRAM en int8. Si vas justo de
+        # memoria o prefieres las dos décimas, vuelve a "small".
+        "model": "medium",             # tiny|base|small|medium|large-v3
+        # Modelo que se usa si NO hay GPU: en CPU, `small` tarda 1,7 s en
+        # transcribir un «hola» (medido), y eso mata la sensación de inmediatez.
+        "cpu_model": "tiny",
+        "device": "auto",              # auto|cpu|cuda
+        "compute_type": "auto",        # auto = int8 en CPU, int8_float16 en GPU
+        "beam_size": 5,
+        "cpu_threads": 0,              # 0 = lo que decida CTranslate2
+        "vad_filter": True,            # recorta silencio: más rápido y sin alucinaciones
+        # Pista de vocabulario para el decodificador. Los nombres de aplicaciones
+        # son palabras inglesas dichas en español, que es justo donde Whisper
+        # falla («Cierra disto» por «Cierra Discord»). Añade aquí las tuyas, y
+        # también los nombres de las personas a las que escribes: «Alain Ryan»
+        # dicho al micrófono no se parece a nada que Whisper conozca, salvo que
+        # se lo digas aquí. Ejemplo: "... Contactos: Alain Ryan, Mamá, Jorge."
+        "initial_prompt": (
+            "Órdenes para un asistente de escritorio en Windows. Aplicaciones: "
+            "Spotify, Discord, Chrome, WhatsApp, YouTube, Steam, Telegram, "
+            "Netflix, Word, Excel, Visual Studio Code, Explorador de archivos. "
+            "Carpetas: Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música."
+        ),
+        # Los parciales son sólo texto en pantalla mientras hablas, y cuestan una
+        # decodificación entera cada 900 ms que compite con la transcripción
+        # final por el mismo modelo. Con la latencia como prioridad, apagados.
+        "partials": False,
+        "partial_interval_ms": 900,
+    },
+    "llm": {
+        "provider": "deepseek",        # | "mock"
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "temperature": 0.3,
+        "max_steps": 8,                # tope de pasos del planner (anti-loop)
+        # Las respuestas se leen en voz alta: dos frases. El tope evita pagar
+        # (en segundos, no en dinero) un párrafo que además nadie quiere oír.
+        "max_tokens": 300,
+        "request_timeout_s": 60,
+    },
+    "tts": {
+        # "edge"  voces neuronales de Microsoft; necesita red, ~1,3 s por respuesta
+        # "xtts"  voz clonada en local sobre la GPU a partir de tts.reference
+        # "mock"  sin audio
+        "provider": "edge",
+        "voice": "es-PE-CamilaNeural",
+        "rate": "+8%",
+        "volume": "+0%",
+        # Idioma de lo que se DICE, cuando debe ser distinto del de la pantalla.
+        # Vacío = el mismo que `language`. Con "en", el modelo devuelve las dos
+        # versiones en una sola respuesta: se oye inglés y se lee español.
+        #
+        # No es un capricho: clonar una voz inglesa hablando inglés sale mucho
+        # mejor que haciéndola hablar español. Medido con la misma referencia
+        # sobre doce frases, comparando cada síntesis con su transcripción:
+        # inglés 0,90 de fidelidad y 1 fallo; español 0,79 y 7 fallos.
+        "speak_language": "",
+        # --- sólo para "xtts" ---
+        # WAV de referencia del que se copia timbre, acento y entonación. Vacío =
+        # %APPDATA%/Nova/voices/reference.wav, que es donde lo deja
+        # `npm run voice:build <carpeta con audios>`.
+        "reference": "",
+        "device": "auto",              # auto|cpu|cuda — en CPU es inviable (>10 s)
+        "speed": 1.0,
+        # Medido sobre 12 frases: a 0,50 la fidelidad de lo que dice sube a 0,91
+        # y a 0,65 baja a 0,80. Más temperatura da más variedad de entonación,
+        # pero también más frases arrastradas.
+        "temperature": 0.5,
+        # "whole": la respuesta entera en una sola pasada del modelo. Es como
+        #          se hicieron las muestras y es la voz que se aprobó (parecido
+        #          0,66 frente a 0,54 troceada). El audio sale en streaming de
+        #          esa misma pasada, así que empieza a sonar a los ~0,4 s.
+        # "streaming": el modo antiguo, partiendo el TEXTO en fragmentos. Ya no
+        #          es más rápido y la voz pierde consistencia entre trozos.
+        "chunking": "whole",
+        # Carpeta con un XTTS ajustado a esta voz (lo deja `npm run voice:train`).
+        # Vacío = XTTS-v2 de serie. OJO: con 3,4 min de audio real, medido, el
+        # ajustado no superó al zero-shot (0,57 de parecido frente a 0,59) y las
+        # variantes que tocan el GPT se entienden peor. Compáralo antes de activarlo.
+        "model_path": "",
+    },
+    "session": {
+        "greeting": "Te escucho.",
+        "speak_greeting": False,       # earcon por defecto; la voz añade ~600 ms
+        "follow_up_seconds": 12,       # conversación continua sin repetir wake word
+        "barge_in": True,
+        # Interrumpir a Nova mientras habla exige más que la escucha normal, porque
+        # el micrófono oye los altavoces y Nova se interrumpía a sí misma. Voz
+        # seguida mínima (ms) y volumen mínimo (RMS lineal, 0..1). Si usas
+        # auriculares no hay eco y puedes bajar el nivel a 0.01; si tu micrófono
+        # sigue oyendo a Nova, súbelo, o pon barge_in en false.
+        "barge_in_start_ms": 400,
+        "barge_in_min_level": 0.04,
+    },
+    "security": {
+        # auto | confirm por nivel de riesgo. Lo que se manda a otra persona
+        # (send_message, send_file_to_app con send=true) pregunta SIEMPRE, se
+        # ponga lo que se ponga aquí: no se deshace y afecta a alguien más.
+        "low": "auto",
+        "medium": "confirm",
+        "high": "confirm",
+        "confirm_timeout_s": 30,
+        # Herramientas que no piden permiso aunque sean de riesgo medio. Para
+        # que Nova navegue por la pantalla sin interrumpirte a cada paso:
+        #   ["read_screen", "click_item", "open_chat"]
+        # Las de riesgo alto (send_message, type_text, click_at...) no entran
+        # aquí ni aunque las pongas: enviar un mensaje no se deshace.
+        "auto_approve": [],
+        "tool_allowlist": [],          # vacío = todas las herramientas registradas
+        "app_allowlist": [],           # vacío = cualquier app instalada
+    },
+    "browser": {
+        # Cómo se controla el navegador:
+        #   "auto"      el que ya tengas abierto (Opera, Chrome, Edge, Firefox...)
+        #               por teclado: abre en TU pestaña, con TUS sesiones. Si no
+        #               hay ninguno abierto, lanza Chrome por CDP.
+        #   "keyboard"  siempre el que tengas abierto; si no hay, falla.
+        #   "cdp"       siempre el Chrome propio de Nova (perfil aparte). Es el
+        #               único que puede leer la página o pulsar por nombre sin
+        #               pasar por la pantalla.
+        "mode": "auto",
+        "prefer": "",                  # p. ej. "opera" si tienes varios abiertos
+        "channel": "chrome",           # chrome | msedge (para el modo cdp)
+        "cdp_port": 9222,
+        "attach_timeout_s": 20,
+        "default_search": "https://www.google.com/search?q={query}",
+    },
+    "files": {
+        # Vacío = carpetas del usuario detectadas por el adaptador del SO
+        # (Escritorio, Documentos, Descargas, Imágenes, Vídeos, Música y OneDrive).
+        # Lo que no cuelgue de estas raíces no existe para el agente.
+        "search_roots": [],
+        "max_results": 12,
+        "max_depth": 6,
+        "budget_s": 6.0,
+    },
+    "screen": {"output_dir": ""},      # vacío = Imágenes/Nova
+    "control": {
+        # Inyección de teclado y ratón. Con false, esas herramientas ni siquiera
+        # se registran: el modelo no las ve y no puede pedirlas.
+        "enabled": True,
+    },
+    "memory": {"enabled": True, "max_turns": 24, "max_actions": 20},
+    # skin: "portrait" (el retrato del personaje) | "aperture" (el skin procedural)
+    "avatar": {"skin": "portrait", "scale": 1.0},
+    "dev": {"log_level": "INFO", "mock": False},
+}
+
+_ENV_MAP = {
+    "NOVA_IPC_PORT": ("ipc.port", int),
+    "NOVA_WAKE_ENGINE": ("wake.engine", str),
+    "NOVA_WAKE_KEYWORD_PATH": ("wake.keyword_path", str),
+    "NOVA_STT_MODEL": ("stt.model", str),
+    "NOVA_STT_DEVICE": ("stt.device", str),
+    "NOVA_LLM_MODEL": ("llm.model", str),
+    "NOVA_LLM_BASE_URL": ("llm.base_url", str),
+    "NOVA_TTS_VOICE": ("tts.voice", str),
+    "NOVA_TTS_PROVIDER": ("tts.provider", str),
+    "NOVA_TTS_SPEAK_LANG": ("tts.speak_language", str),
+    "NOVA_LOG_LEVEL": ("dev.log_level", str),
+}
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    out = copy.deepcopy(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _deep_diff(base: dict, current: dict) -> dict:
+    """Sólo lo que `current` cambia respecto a `base`, con la misma forma."""
+    out: dict = {}
+    for key, value in current.items():
+        if key not in base:
+            out[key] = copy.deepcopy(value)
+        elif isinstance(value, dict) and isinstance(base[key], dict):
+            sub = _deep_diff(base[key], value)
+            if sub:
+                out[key] = sub
+        elif value != base[key]:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def _prune_empty(node: dict) -> dict:
+    out = {}
+    for key, value in node.items():
+        if isinstance(value, dict):
+            value = _prune_empty(value)
+            if not value:
+                continue
+        out[key] = value
+    return out
+
+
+def _unset(node: dict, dotted: str) -> None:
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        node = node.get(part)
+        if not isinstance(node, dict):
+            return
+    node.pop(parts[-1], None)
+
+
+class Config:
+    def __init__(self, data: dict[str, Any]):
+        self._data = data
+
+    @classmethod
+    def load(cls) -> "Config":
+        data = copy.deepcopy(DEFAULTS)
+        path = settings_file()
+        if path.exists():
+            try:
+                data = _deep_merge(data, json.loads(path.read_text("utf-8")))
+            except (OSError, json.JSONDecodeError):
+                pass  # settings corrupto no debe impedir arrancar
+        cfg = cls(data)
+        for env_key, (dotted, caster) in _ENV_MAP.items():
+            raw = os.environ.get(env_key)
+            if raw:
+                cfg.set(dotted, caster(raw))
+        if os.environ.get("NOVA_MOCK", "").lower() in ("1", "true", "yes"):
+            cfg.set("dev.mock", True)
+        # Freno de mano para desarrollo y demos: desactiva teclado y ratón
+        # simulados sin tocar settings.json.
+        if os.environ.get("NOVA_NO_INPUT", "").lower() in ("1", "true", "yes"):
+            cfg.set("control.enabled", False)
+        return cfg
+
+    def get(self, dotted: str, default: Any = None) -> Any:
+        node: Any = self._data
+        for part in dotted.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
+
+    def set(self, dotted: str, value: Any) -> None:
+        parts = dotted.split(".")
+        node = self._data
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+
+    def patch(self, patch: dict[str, Any]) -> None:
+        self._data = _deep_merge(self._data, patch)
+
+    def as_dict(self) -> dict[str, Any]:
+        return copy.deepcopy(self._data)
+
+    def save(self) -> None:
+        """Guarda sólo lo que el usuario ha cambiado, no una foto de todo.
+
+        La versión anterior volcaba la configuración entera. Parecía inocuo y no
+        lo era: al pulsar «Guardar» en el panel, cada valor por defecto quedaba
+        congelado en settings.json, y como ese archivo pisa a DEFAULTS, cualquier
+        mejora posterior de un valor por defecto se ignoraba en silencio para
+        siempre. Pasó de verdad: `vad.end_ms` subió de 450 a 800 en el código y
+        el usuario seguía con 450 sin saberlo. Guardar sólo la diferencia deja
+        que los defaults evolucionen y que lo del usuario mande sólo donde él
+        tocó algo.
+
+        Tampoco se guarda lo que viene del entorno: un override del .env es
+        temporal por definición, y persistirlo lo convertiría en permanente
+        aunque después se borre la línea.
+        """
+        patch = _deep_diff(DEFAULTS, self._data)
+        for env_key, (dotted, _caster) in _ENV_MAP.items():
+            if os.environ.get(env_key):
+                _unset(patch, dotted)
+        if os.environ.get("NOVA_MOCK", "").lower() in ("1", "true", "yes"):
+            _unset(patch, "dev.mock")
+        if os.environ.get("NOVA_NO_INPUT", "").lower() in ("1", "true", "yes"):
+            _unset(patch, "control.enabled")
+        patch = _prune_empty(patch)   # {"tts": {}} no aporta nada y confunde
+        settings_file().write_text(
+            json.dumps(patch, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    @property
+    def mock(self) -> bool:
+        return bool(self.get("dev.mock"))

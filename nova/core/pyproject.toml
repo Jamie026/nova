@@ -1,0 +1,16 @@
+[project]
+name = "nova-core"
+version = "0.1.0"
+description = "Núcleo de voz, razonamiento y automatización de Nova"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["nova*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
