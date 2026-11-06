@@ -32,6 +32,25 @@ def _human_size(size: int) -> str:
     return f"{size:.1f} GB"
 
 
+# Windows no abre estos archivos: los ejecuta, y pueden venir de una descarga.
+_RUNS_CODE = frozenset({
+    ".appref-ms", ".bat", ".cmd", ".com", ".cpl", ".exe", ".hta", ".jar", ".js", ".jse",
+    ".lnk", ".msc", ".msi", ".msp", ".pif", ".ps1", ".reg", ".scf", ".scr", ".url",
+    ".vbe", ".vbs", ".wsf", ".wsh",
+})
+
+
+def _runs_code(path: str) -> bool:
+    # Windows ignora los puntos y espacios finales: «setup.exe.» ejecuta setup.exe.
+    return Path(str(path).rstrip(" .")).suffix.lower() in _RUNS_CODE
+
+
+def _resolved(searcher, path: str) -> str:
+    """La ruta tal cual, o resuelta dentro de las carpetas permitidas si es relativa."""
+    resolve = getattr(searcher, "resolve", None)
+    return str(resolve(path)) if resolve is not None else path
+
+
 def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
     def _denied(path: str) -> ToolResult:
         return ToolResult(
@@ -47,16 +66,19 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
             return ToolResult(True, f"No encontré nada parecido a «{name}» en {where}",
                               {"results": []})
         best = hits[0]
+        # Con la ruta completa: el modelo la usa tal cual en la siguiente
+        # herramienta. Con sólo el nombre de la carpeta, inventaba una relativa.
         if len(hits) == 1:
-            summary = f"Encontré «{best.name}» en {Path(best.folder).name}"
+            summary = f"Encontré «{best.name}»: {best.path}"
         else:
-            others = ", ".join(h.name for h in hits[1:4])
-            summary = (f"Encontré {len(hits)}: la mejor coincidencia es «{best.name}» "
-                       f"en {Path(best.folder).name}. Otras: {others}")
+            others = "; ".join(h.path for h in hits[1:4])
+            summary = (f"Encontré {len(hits)}. La mejor coincidencia: {best.path}. "
+                       f"Otras: {others}")
         return ToolResult(True, summary, {"results": [h.as_dict() for h in hits]})
 
     async def list_folder(folder: str, kind: str = "any") -> ToolResult:
         path = Path(folder).expanduser()
+        path = _resolved(searcher, path)
         if not searcher.allows(path):
             return _denied(folder)
         if not path.is_dir():
@@ -82,6 +104,7 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
         return ToolResult(True, f"Carpetas del usuario — {listing}", {"folders": folders})
 
     async def open_file(path: str) -> ToolResult:
+        path = _resolved(searcher, path)
         if not searcher.allows(path):
             return _denied(path)
         target = Path(path).expanduser()
@@ -91,6 +114,7 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
         return ToolResult(ok, f"Abrí {target.name}" if ok else f"No pude abrir {target.name}")
 
     async def reveal_file(path: str) -> ToolResult:
+        path = _resolved(searcher, path)
         if not searcher.allows(path):
             return _denied(path)
         ok = os_adapter.reveal_path(str(Path(path).expanduser()))
@@ -98,6 +122,7 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
                           else "No pude abrir el Explorador ahí")
 
     async def copy_file_to_clipboard(path: str, as_image: bool = False) -> ToolResult:
+        path = _resolved(searcher, path)
         if not searcher.allows(path):
             return _denied(path)
         target = Path(path).expanduser()
@@ -114,6 +139,7 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
                           {"path": str(target), "as_image": as_image})
 
     async def read_text_file(path: str) -> ToolResult:
+        path = _resolved(searcher, path)
         if not searcher.allows(path):
             return _denied(path)
         target = Path(path).expanduser()
@@ -172,8 +198,10 @@ def build(os_adapter: OsAdapter, searcher: FileSearcher) -> list[Tool]:
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"], "additionalProperties": False,
             },
-            handler=open_file, risk=Risk.MEDIUM, timeout_s=15,
-            confirm_template="¿Abro «{path}»?",
+            handler=open_file, risk=Risk.LOW, timeout_s=15,
+            # Abrir no se pregunta, ejecutar sí: open_path es os.startfile.
+            always_confirm=lambda args: _runs_code(args.get("path", "")),
+            confirm_template="«{path}» es un programa y se ejecutaría. ¿Lo abro?",
         ),
         Tool(
             name="reveal_file",

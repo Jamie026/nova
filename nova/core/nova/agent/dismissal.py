@@ -35,7 +35,9 @@ _STOP_ANYWHERE = (
     "silencio", "basta", "olvidalo", "dejalo", "stop", "cancel", "shut up",
 )
 # Frases que sólo cuentan si son toda la orden (quitados el nombre y el relleno).
-_SLEEP_EXACT = ("nada mas", "es todo", "ya esta", "terminamos", "rest", "bye")
+# «Descanso» a secas es «descansa» mal transcrito (pasó con Whisper medium); dentro
+# de una frase («me tomo un descanso») no cuenta, por eso va en EXACT.
+_SLEEP_EXACT = ("nada mas", "es todo", "ya esta", "terminamos", "rest", "bye", "descanso")
 _STOP_EXACT = ("para", "para ya", "para para", "alto", "espera", "quieto", "no", "no no", "no no no")
 
 # Lo que sobra alrededor: el nombre, la cortesía, el «ya».

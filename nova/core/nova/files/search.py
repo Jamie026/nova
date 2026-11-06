@@ -139,6 +139,22 @@ class FileSearcher:
     def existing_roots(self) -> list[Path]:
         return [r for r in self.roots if r.is_dir()]
 
+    def resolve(self, path: str | Path) -> Path:
+        """Una ruta relativa («Prueba Nova\\clientes.xlsx») se busca dentro de las
+        carpetas permitidas. Pasó: el modelo usó la carpeta que le dio la búsqueda
+        sin la ruta completa y la herramienta no encontraba el archivo."""
+        candidate = Path(path).expanduser()
+        if candidate.is_absolute():
+            return candidate
+        for root in self.existing_roots():
+            if (root / candidate).exists():
+                return root / candidate
+        for root in self.existing_roots():          # un nivel más abajo: Descargas\Prueba Nova\…
+            found = next(root.glob(f"*/{candidate.as_posix()}"), None)
+            if found is not None:
+                return found
+        return candidate
+
     def allows(self, path: str | Path) -> bool:
         """Puerta única de alcance: cualquier herramienta que toque una ruta pasa por aquí."""
         return is_within(Path(path).expanduser(), self.existing_roots())

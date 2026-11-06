@@ -40,6 +40,32 @@ log = logging.getLogger("nova.stt")
 # afecta a la latencia de uso: cargar es lo único que se solapa.
 MODEL_LOAD_LOCK = threading.Lock()
 JUDGE_MODEL = "base"
+# Si el modelo pedido no está descargado se arranca con el mejor que sí lo esté,
+# de mayor a menor. Descargarlo al arrancar dejaba a Nova sorda varios minutos:
+# el micrófono no se abre hasta que la transcripción está lista (pasó con
+# large-v3, 3 GB, cortado a los 335 MB al cerrar Nova pensando que se colgó).
+_FALLBACK_MODELS = ("large-v3", "medium", "small", "base", "tiny")
+
+
+def is_downloaded(name: str) -> bool:
+    from faster_whisper import download_model
+
+    try:
+        download_model(name, local_files_only=True)
+        return True
+    except Exception:
+        return False
+
+
+def pick_available(name: str, downloaded=is_downloaded) -> str:
+    """El modelo pedido si está en disco; si no, el mayor que lo esté. Si no hay
+    ninguno (primera instalación) se devuelve el pedido y se descarga."""
+    if downloaded(name):
+        return name
+    for candidate in _FALLBACK_MODELS:
+        if candidate != name and downloaded(candidate):
+            return candidate
+    return name
 
 _CUDA_READY = False
 # Hay que quedarse con dos cosas o el arreglo se deshace solo:
@@ -265,6 +291,12 @@ class FasterWhisperStt:
         if self._model is not None:
             return
 
+        chosen = await asyncio.to_thread(pick_available, self._model_name)
+        if chosen != self._model_name:
+            log.warning("whisper %s no está descargado; arranco con %s para no dejarte sin oído. "
+                        "Para usar %s, descárgalo antes con: npm run models:download",
+                        self._model_name, chosen, self._model_name)
+            self._model_name = chosen
         log.info("cargando whisper %s en %s (%s)", self._model_name, self._device, self._compute_type)
         try:
             self._model = await asyncio.to_thread(self._load_model, self._device, self._compute_type)
@@ -293,7 +325,7 @@ class FasterWhisperStt:
         return model
 
     async def transcribe(self, pcm16: bytes, final: bool = True,
-                         strict: bool = True) -> Transcript:
+                         strict: bool = True, prompt: str | None = None) -> Transcript:
         if self._model is None:
             await self.warmup()
         audio = np.frombuffer(pcm16, dtype=np.int16).astype(np.float32) / 32768.0
@@ -318,7 +350,7 @@ class FasterWhisperStt:
                 no_speech_threshold=0.6,
                 log_prob_threshold=-1.0,
                 compression_ratio_threshold=2.4,
-                initial_prompt=self._initial_prompt,
+                initial_prompt=self._initial_prompt if prompt is None else prompt,
             )
             return " ".join(s.text.strip() for s in segments).strip()
 

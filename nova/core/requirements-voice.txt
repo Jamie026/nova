@@ -26,6 +26,10 @@ librosa>=0.10
 omegaconf>=2.3
 pyloudnorm>=0.1
 resemble-perth>=1.0
+# resemble-perth importa pkg_resources, que setuptools eliminó en la 82. Si
+# falta, perth deja PerthImplicitWatermarker = None sin avisar y Chatterbox
+# muere al cargar con «'NoneType' object is not callable».
+setuptools<81
 s3tokenizer>=0.1
 safetensors>=0.5
 transformers>=4.46

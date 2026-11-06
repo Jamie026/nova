@@ -8,7 +8,6 @@ sílaba, así que «Abre Spotify» le llegaba a Whisper como «Spotify».
 Se prueba con un VAD falso porque lo que importa no es cuándo decide el VAD, sino
 qué audio hay guardado cuando lo decide.
 """
-import asyncio
 
 import pytest
 

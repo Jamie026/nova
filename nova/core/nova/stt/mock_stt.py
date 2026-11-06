@@ -21,7 +21,7 @@ class MockStt:
         return None
 
     async def transcribe(self, pcm16: bytes, final: bool = True,
-                         strict: bool = True) -> Transcript:
+                         strict: bool = True, prompt: str | None = None) -> Transcript:
         await asyncio.sleep(0.15)
         text = CANNED[self._index % len(CANNED)]
         if final:

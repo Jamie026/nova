@@ -58,7 +58,8 @@ class Tool:
     # la frase depende de lo que se vaya a hacer («…y lo envío» sólo si send=true).
     confirm_template: str | Callable[[dict[str, Any]], str] = ""
     # Acciones que pregunta SIEMPRE, se configure lo que se configure: las que
-    # salen de la máquina hacia otra persona (enviar un mensaje, un archivo).
+    # salen de la máquina hacia otra persona (enviar un mensaje, un archivo) y
+    # las que ejecutan un programa al abrirlo.
     # Puede depender de los argumentos: pegar un archivo sin enviarlo no sale.
     always_confirm: bool | Callable[[dict[str, Any]], bool] = False
 

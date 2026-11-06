@@ -5,7 +5,6 @@ archivo de paginación es demasiado pequeño» (WinError 1455). El turno termin�
 en ERROR, el avatar estuvo «hablando» minuto y medio sin sonido, y la voz se
 quedó muerta hasta reiniciar.
 """
-import asyncio
 
 import pytest
 

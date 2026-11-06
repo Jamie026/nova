@@ -143,3 +143,11 @@ async def test_hablar_de_otra_cosa_mientras_ejecuta_no_la_corta():
     assert s._turn_task is not None and not s._turn_task.done()
     assert s._machine.state is AgentState.EXECUTING
     await s._cancel_turn()
+
+
+
+def test_descanso_a_secas_es_descansa_y_en_una_frase_no():
+    from nova.agent import dismissal
+
+    assert dismissal.interpret("Descanso.") == dismissal.SLEEP
+    assert dismissal.interpret("Me voy a tomar un descanso") != dismissal.SLEEP

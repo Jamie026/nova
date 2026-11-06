@@ -62,7 +62,8 @@ def test_el_orquestador_no_parte_nada_si_hay_un_solo_idioma():
 
     orq = Orchestrator.__new__(Orchestrator)
     orq._language, orq._speak_language = "es", ""
-    assert orq._split("EN: Done.\nES: Listo.") == ("EN: Done.\nES: Listo.",) * 2
+    # No parte nada; sólo une las líneas, como se dice en voz alta.
+    assert orq._split("EN: Done.\nES: Listo.") == ("EN: Done. ES: Listo.",) * 2
     orq._speak_language = "en"
     assert orq._split("EN: Done.\nES: Listo.") == ("Done.", "Listo.")
 

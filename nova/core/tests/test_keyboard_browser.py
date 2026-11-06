@@ -23,11 +23,13 @@ class AdaptadorFalso:
     def type_text(self, t):
         self.acciones.append(("type", t)); return True
 
+    portapapeles = "lo que tenía el usuario"
+
     def get_clipboard(self):
-        return "lo que tenía el usuario"
+        return self.portapapeles
 
     def set_clipboard(self, t):
-        self.acciones.append(("clip", t)); return True
+        self.acciones.append(("clip", t)); self.portapapeles = t; return True
 
 
 OPERA = WindowInfo(handle=3, title="Acceso Rápido - Opera", process="opera.exe", foreground=True)
@@ -60,7 +62,9 @@ async def test_abre_youtube_en_la_pestana_actual():
     # estaba restaurando), y el portapapeles del usuario vuelve a su sitio.
     assert ad.acciones == [("focus", 3), ("keys", ("ctrl", "l")), ("clip", "https://youtube.com"),
                            ("keys", ("ctrl", "a")), ("keys", ("ctrl", "v")),
-                           ("clip", "lo que tenía el usuario"), ("keys", ("enter",))]
+                           ("keys", ("delete",)),        # fuera el autocompletado de Opera
+                           ("keys", ("enter",)),
+                           ("clip", "lo que tenía el usuario")]   # tu portapapeles, sólo después de Enter
 
 
 @pytest.mark.asyncio
@@ -115,3 +119,69 @@ async def test_sin_navegador_lanza_el_preferido_en_vez_de_chrome():
 async def test_sin_preferido_no_lanza_nada():
     ad = AdaptadorFalso([DISCORD])
     assert await kb.KeyboardBrowser(ad, prefer="").ensure() is None
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("en_uso", ["(1) WhatsApp - Opera", "Recibidos (3) - ana@gmail.com - Gmail - Opera",
+                                    "Meet: reunión semanal - Opera"])
+async def test_no_pisa_una_pestana_que_estas_usando(en_uso):
+    """Pasó: «abre YouTube» con WhatsApp delante reemplazó WhatsApp."""
+    from nova.os_adapter.base import WindowInfo
+
+    ad = AdaptadorFalso([WindowInfo(handle=3, title=en_uso, process="opera.exe", foreground=True)])
+    page = await kb.KeyboardBrowser(ad).goto("youtube.com")
+    assert page.new_tab
+    assert ("keys", ("ctrl", "t")) in ad.acciones and ("keys", ("ctrl", "l")) not in ad.acciones
+
+
+@pytest.mark.asyncio
+async def test_una_pagina_cualquiera_si_se_reemplaza():
+    page = await kb.KeyboardBrowser(AdaptadorFalso([OPERA])).goto("youtube.com")
+    assert not page.new_tab
+
+
+
+@pytest.mark.asyncio
+async def test_si_copias_algo_mientras_tanto_no_se_pisa():
+    class Copiona(AdaptadorFalso):
+        def press_keys(self, keys):
+            if keys == ["enter"]:
+                self.portapapeles = "lo que copié justo ahora"
+            return super().press_keys(keys)
+
+    ad = Copiona([OPERA])
+    await kb.KeyboardBrowser(ad).goto("youtube.com")
+    assert ad.portapapeles == "lo que copié justo ahora"
+
+
+@pytest.mark.asyncio
+async def test_si_el_portapapeles_no_acepta_la_direccion_se_teclea():
+    class SinPortapapeles(AdaptadorFalso):
+        def set_clipboard(self, t):
+            return False
+
+    ad = SinPortapapeles([OPERA])
+    await kb.KeyboardBrowser(ad).goto("youtube.com")
+    assert ("type", "https://youtube.com") in ad.acciones
+    assert ("keys", ("ctrl", "v")) not in ad.acciones          # nunca se pega lo del usuario
+
+
+
+@pytest.mark.asyncio
+async def test_una_pestana_vacia_no_escribe_nada():
+    """Pasó: «abre una pestaña nueva» escribía «https://about:blank» y Opera lo buscaba en Google."""
+    ad = AdaptadorFalso([OPERA])
+    tools = {t.name: t for t in browser_tools.build(browser=None, os_adapter=ad, mode="keyboard")}
+    await tools["browser_new_tab"].handler()
+    assert ("keys", ("ctrl", "t")) in ad.acciones
+    assert not [a for a in ad.acciones if a[0] in ("clip", "type")]
+    assert ("keys", ("enter",)) not in ad.acciones
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["about:blank", "opera://settings", "chrome://downloads"])
+async def test_las_paginas_internas_no_llevan_https(url):
+    ad = AdaptadorFalso([OPERA])
+    await kb.KeyboardBrowser(ad).goto(url)
+    assert ("clip", url) in ad.acciones

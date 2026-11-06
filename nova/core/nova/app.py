@@ -22,7 +22,8 @@ from .os_adapter import build_os_adapter
 from .paths import screenshots_dir
 from .state import StateMachine
 from .tools import applications as app_tools
-from .tools import browser_tools, control_tools, file_tools, memory_tools, screen_tools, system_tools
+from .tools import (browser_tools, control_tools, dictation_tools, document_tools, file_tools,
+                    memory_tools, messaging_tools, screen_tools, system_tools)
 from .agent.notes import UserNotes
 from .paths import memory_file
 from .tools.registry import ToolRegistry
@@ -81,7 +82,7 @@ def build_stt(config: Config):
     from .stt.faster_whisper_stt import FasterWhisperStt
 
     return FasterWhisperStt(
-        model=config.get("stt.model", "small"),
+        model=config.get("stt.model", "large-v3"),
         cpu_model=config.get("stt.cpu_model", "tiny"),
         device=config.get("stt.device", "auto"),
         compute_type=config.get("stt.compute_type", "auto"),
@@ -222,9 +223,18 @@ class NovaApp:
             prefer=config.get("browser.prefer", "")))
         self.registry.register_all(system_tools.build(self.os_adapter))
         self.registry.register_all(file_tools.build(self.os_adapter, self.searcher))
+        self.registry.register_all(document_tools.build(self.searcher))
         self.registry.register_all(screen_tools.build(self.os_adapter, self.capture))
         if config.get("control.enabled", True):
             self.registry.register_all(control_tools.build(self.os_adapter, self.searcher))
+            from .paths import app_data_dir
+
+            self.registry.register_all(messaging_tools.build(
+                self.os_adapter, prefer=config.get("browser.prefer", ""), searcher=self.searcher,
+                data_dir=app_data_dir(), notify=self._notify, settings=config.get("messaging", {}),
+                llm_chat=lambda messages: self.llm.chat(messages), read_text=document_tools.read_document,
+                is_idle=lambda: self.session.is_free(),
+                on_activity=lambda active: self.session.keep_awake(active)))
         else:
             # No registrarlas es mejor que rechazarlas: el modelo no las ve en el
             # esquema, así que no las propone y no gasta un turno en un «no puedo».
@@ -232,6 +242,7 @@ class NovaApp:
 
         self.notes = UserNotes(memory_file())
         self.registry.register_all(memory_tools.build(self.notes))
+        self.registry.register_all(dictation_tools.build(self._dictate, self._confirm))
         self.conversation = ConversationMemory(int(config.get("memory.max_turns", 24)))
         self.actions = ActionLog(int(config.get("memory.max_actions", 20)))
         self.preferences = Preferences()
@@ -254,6 +265,24 @@ class NovaApp:
 
     async def _confirm(self, request_id: str, text: str, risk: str) -> bool:
         return await self.session.request_confirmation(request_id, text, risk)
+
+    async def _notify(self, text: str, speak: bool = False) -> None:
+        """Avisos de trabajos en segundo plano (envíos en lote). Se dicen en voz
+        sólo si Nova está libre: no se cuela encima de una conversación."""
+
+        from .agent.tone import naturalize
+
+        text = naturalize(text)
+        log.info("aviso: %s", text)
+        await self.ipc.broadcast({"type": "status", "text": text})
+        if speak and self.session.is_free():
+            try:
+                await self.session.announce(await self.orchestrator.translate_for_speech(text))
+            except Exception as exc:
+                log.debug("no pude decir el aviso: %s", exc)
+
+    async def _dictate(self, prompt: str) -> str:
+        return await self.session.request_dictation(prompt)
 
     async def _set_phase(self, phase: str) -> None:
         from .state import AgentState
@@ -302,6 +331,18 @@ class NovaApp:
         self.ipc.on("wake", on_wake)
         self.ipc.on("get_settings", on_get_settings)
         self.ipc.on("set_settings", on_set_settings)
+
+        async def on_shutdown(_message: dict[str, Any]) -> None:
+            self.stop_requested.set()
+
+        self.ipc.on("shutdown", on_shutdown)
+
+    @property
+    def stop_requested(self) -> asyncio.Event:
+        """Se activa con la orden «shutdown» del canal; main la espera junto a Ctrl+C."""
+        if not hasattr(self, "_stop_requested"):
+            self._stop_requested = asyncio.Event()
+        return self._stop_requested
 
     async def start(self) -> None:
         await self.ipc.start()

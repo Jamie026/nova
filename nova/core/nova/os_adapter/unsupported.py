@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-from .base import AppInfo, WindowInfo
+from .base import AppInfo, TabInfo, WindowInfo
 
 
 class UnsupportedAdapter:
@@ -54,6 +54,12 @@ class UnsupportedAdapter:
     def window_rect(self, handle: int) -> tuple[int, int, int, int] | None:
         return None
 
+    def window_at(self, x: int, y: int) -> int:
+        return 0
+
+    def capture_window(self, handle: int):
+        return None
+
     def user_folders(self) -> dict[str, str]:
         from pathlib import Path
 
@@ -65,6 +71,12 @@ class UnsupportedAdapter:
                               ("videos", "Videos"), ("music", "Music"))
             if (home / name).is_dir()
         }
+
+    def browser_tabs(self, handle: int) -> list[TabInfo]:
+        return []
+
+    def select_tab(self, handle: int, index: int) -> bool:
+        return False
 
     def open_path(self, path: str) -> bool:
         self._fail()

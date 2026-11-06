@@ -6,7 +6,7 @@
  * no hay que tocar este archivo.
  */
 
-const state = { config: {} };
+const state = { config: {}, loaded: false };
 
 /* ------------------------------------------------------------- utilidades */
 const getPath = (object, dotted) =>
@@ -35,6 +35,8 @@ document.getElementById('rail').addEventListener('click', (event) => {
 /* ---------------------------------------------------------------- ajustes */
 function applyConfig(config) {
   state.config = config;
+  state.loaded = true;
+  for (const button of document.querySelectorAll('[data-save]')) button.disabled = false;
   for (const field of document.querySelectorAll('[data-path]')) {
     const value = getPath(config, field.dataset.path);
     if (value === undefined) continue;
@@ -58,8 +60,12 @@ function collectPatch() {
   return patch;
 }
 
+/* Guardar antes de recibir la configuración mandaría el formulario vacío, y el
+ * núcleo lo aceptaría: cada ajuste quedaría en 0 o en blanco en settings.json. */
 for (const button of document.querySelectorAll('[data-save]')) {
+  button.disabled = true;
   button.addEventListener('click', () => {
+    if (!state.loaded) return;
     window.nova.send({ type: 'set_settings', patch: collectPatch() });
     button.textContent = 'Guardado';
     setTimeout(() => (button.textContent = 'Guardar cambios'), 1600);

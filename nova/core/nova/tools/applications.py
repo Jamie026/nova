@@ -1,17 +1,54 @@
 """Herramientas de aplicaciones y ventanas."""
 from __future__ import annotations
 
+import re
+
 from ..os_adapter.base import OsAdapter
 from .registry import Risk, Tool, ToolResult
+
+
+def _words(text: str) -> list[str]:
+    table = str.maketrans("áéíóúüñ", "aeiouun")
+    return [w for w in re.split(r"[^a-z0-9]+", text.lower().translate(table)) if w]
+
+
+def running_window(os_adapter: OsAdapter, *names: str):
+    """La ventana de una aplicación ya abierta, por el nombre de su PROCESO, no
+    por el título: «Spotify» no debe confundirse con una pestaña del navegador
+    que se llame «Spotify - Web Player».
+    """
+    wanted = [w for name in names for w in _words(name) if len(w) >= 4]
+    if not wanted:
+        return None
+    hits = []
+    for window in os_adapter.list_windows():
+        process = (window.process or "").lower().removesuffix(".exe")
+        if len(process) < 4:
+            continue
+        if any(process == w or process.startswith(w) or process.endswith(w) or w.startswith(process)
+               for w in wanted):
+            hits.append(window)
+    hits.sort(key=lambda w: (not w.foreground, w.minimized))
+    return hits[0] if hits else None
 
 
 def build(os_adapter: OsAdapter, app_allowlist: list[str] | None = None) -> list[Tool]:
     allowed = {a.lower() for a in (app_allowlist or [])}
 
-    async def open_application(application: str) -> ToolResult:
+    async def open_application(application: str, new_window: bool = False) -> ToolResult:
         if allowed and application.lower() not in allowed:
             return ToolResult(False, f"«{application}» no está en la lista de aplicaciones permitidas")
         app = os_adapter.find_app(application)
+        # Si ya está abierta (aunque esté minimizada), se trae al frente en vez de
+        # lanzarla otra vez. Pasó: «deja Opera abierto» tras minimizarlo todo abrió
+        # una ventana nueva de Opera al lado de la del usuario.
+        if not new_window:
+            window = running_window(os_adapter, application, app.name if app else "")
+            if window is not None:
+                if os_adapter.focus_window(window.handle):
+                    return ToolResult(True, f"{app.name if app else application} ya estaba abierta: la "
+                                            f"traje al frente ({window.title})",
+                                      {"name": app.name if app else application, "already_open": True})
         if app is None:
             return ToolResult(False, f"No encontré ninguna aplicación instalada parecida a «{application}»")
         if not os_adapter.open_app(app):
@@ -58,10 +95,14 @@ def build(os_adapter: OsAdapter, app_allowlist: list[str] | None = None) -> list
     return [
         Tool(
             name="open_application",
-            description="Abre una aplicación instalada por su nombre, p. ej. 'spotify', 'visual studio code', 'calculadora'.",
+            description=("Abre una aplicación instalada por su nombre, p. ej. 'spotify', 'visual studio "
+                         "code', 'calculadora'. Si ya está abierta, aunque esté minimizada, la trae al "
+                         "frente en vez de abrir otra."),
             parameters={
                 "type": "object",
-                "properties": {"application": {"type": "string", "description": "Nombre de la aplicación"}},
+                "properties": {"application": {"type": "string", "description": "Nombre de la aplicación"},
+                               "new_window": {"type": "boolean", "default": False,
+                                              "description": "true sólo si el usuario pide otra ventana nueva"}},
                 "required": ["application"], "additionalProperties": False,
             },
             handler=open_application, risk=Risk.LOW, timeout_s=20,

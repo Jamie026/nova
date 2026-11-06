@@ -1,10 +1,20 @@
-"""Leer la pantalla como texto con posiciones, con el OCR que trae Windows.
+"""Leer la pantalla y las imágenes como texto con posiciones, con RapidOCR.
 
 Nova no tiene modelo de visión: DeepSeek no ve imágenes y en una GPU de 6 GB, ya
-ocupada por Whisper y la voz clonada, no cabe uno. Lo que sí cabe —porque no
-ocupa nada— es el OCR de Windows 11, el mismo que usa la herramienta de recortes.
-Medido: 0,14 s para una pantalla de 1920x1080, 60-70 líneas con sus coordenadas,
-español e inglés a la vez, sin descargar un solo byte.
+ocupada por Whisper y la voz clonada, no cabe uno. Lo que sí cabe es un OCR:
+RapidOCR (modelos PP-OCR de PaddleOCR sobre ONNX), en CPU, gratis, sin internet
+y con ~30 MB de modelos que vienen con el paquete.
+
+Antes se usaba el OCR de Windows. Medido con pantallas sintéticas de interfaz
+(WhatsApp y Discord, claro, oscuro y morado, letra de 12 a 15 px; 441 textos):
+
+                      texto bien    clic en su sitio    tiempo por pantalla
+    OCR de Windows       92 %             91 %               0,06 s
+    RapidOCR             97 %             97 %               1,3 s
+
+y con comprobantes, el monto mal leído sin avisar bajó de 31 de 192 a 0 (ver
+tools/document_tools.py). Es más lento, pero leer la pantalla mal y hacer clic
+donde no es sale más caro que un segundo de espera.
 
 Con eso la pantalla se convierte en una lista de líneas de texto con su posición.
 No es «ver», pero para lo que un asistente necesita —«el segundo chat de la
@@ -18,8 +28,9 @@ por eso leerla es una acción de riesgo medio y no se hace sin avisar.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
-import sys
+import threading
 import time
 from dataclasses import dataclass
 
@@ -39,6 +50,7 @@ class ScreenLine:
     y: int
     width: int
     height: int
+    score: float = 1.0      # confianza del OCR, de 0 a 1
 
     @property
     def center(self) -> tuple[int, int]:
@@ -96,52 +108,59 @@ class ScreenReading:
         return groups
 
 
+_engine = None
+_engine_lock = threading.Lock()     # una lectura a la vez: el motor no es reentrante
+
+
 def available() -> bool:
-    if sys.platform != "win32":
-        return False
     try:
-        from winrt.windows.media.ocr import OcrEngine  # noqa: F401
+        import rapidocr  # noqa: F401
         return True
     except ImportError:
         return False
 
 
-async def read_png(png: bytes, origin: tuple[int, int], size: tuple[int, int],
-                   title: str = "", language: str = "es") -> ScreenReading:
-    from winrt.windows.globalization import Language
-    from winrt.windows.graphics.imaging import BitmapDecoder
-    from winrt.windows.media.ocr import OcrEngine
-    from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
+def _rapidocr():
+    global _engine
+    if _engine is None:
+        from rapidocr import RapidOCR
 
-    stream = InMemoryRandomAccessStream()
-    writer = DataWriter(stream.get_output_stream_at(0))
-    writer.write_bytes(png)
-    await writer.store_async()
-    await writer.flush_async()
-    decoder = await BitmapDecoder.create_async(stream)
-    bitmap = await decoder.get_software_bitmap_async()
+        logging.getLogger("RapidOCR").setLevel(logging.WARNING)
+        _engine = RapidOCR(params={"Global.log_level": "warning"})
+    return _engine
 
-    engine = OcrEngine.try_create_from_language(Language(language)) \
-        or OcrEngine.try_create_from_user_profile_languages()
-    if engine is None:
-        raise RuntimeError("Windows no tiene ningún idioma de OCR instalado")
-    result = await engine.recognize_async(bitmap)
 
+def recognize(pixels) -> tuple[list, list[str], list[float]]:
+    """(cajas de 4 puntos, textos, confianzas) de una imagen RGB como array."""
+    with _engine_lock:
+        result = _rapidocr()(pixels)
+    boxes = [] if result.boxes is None else [[(float(x), float(y)) for x, y in box] for box in result.boxes]
+    return boxes, list(result.txts or []), [float(v) for v in (result.scores or [])]
+
+
+def _lines_from_png(png: bytes, origin: tuple[int, int]) -> list[ScreenLine]:
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(io.BytesIO(png)) as image:
+        pixels = np.array(image.convert("RGB"))
     left, top = origin
     lines: list[ScreenLine] = []
-    for raw in result.lines:
-        words = list(raw.words)
-        if not words:
+    for box, text, score in zip(*recognize(pixels)):
+        text = text.strip()
+        if not text:
             continue
-        x0 = min(w.bounding_rect.x for w in words)
-        y0 = min(w.bounding_rect.y for w in words)
-        x1 = max(w.bounding_rect.x + w.bounding_rect.width for w in words)
-        y1 = max(w.bounding_rect.y + w.bounding_rect.height for w in words)
-        text = raw.text.strip()
-        if text:
-            lines.append(ScreenLine(0, text, int(left + x0), int(top + y0),
-                                    int(x1 - x0), int(y1 - y0)))
+        xs, ys = [x for x, _ in box], [y for _, y in box]
+        x0, y0 = min(xs), min(ys)
+        lines.append(ScreenLine(0, text, int(left + x0), int(top + y0),
+                                int(max(xs) - x0), int(max(ys) - y0), score))
+    return lines
 
+
+async def read_png(png: bytes, origin: tuple[int, int], size: tuple[int, int],
+                   title: str = "", language: str = "es") -> ScreenReading:
+    """`language` se ignora: el modelo lee español e inglés a la vez."""
+    lines = await asyncio.to_thread(_lines_from_png, png, origin)
     # Orden de lectura: por filas (con tolerancia de media línea) y dentro de
     # cada fila de izquierda a derecha. Sin la tolerancia, dos textos de la misma
     # fila con un píxel de diferencia salen en orden absurdo.
@@ -161,6 +180,22 @@ def grab_png(box: dict[str, int] | None) -> tuple[bytes, tuple[int, int], tuple[
         raw = sct.grab(area)
         png = mss.tools.to_png(raw.rgb, raw.size)
         return png, (int(area["left"]), int(area["top"])), (raw.size.width, raw.size.height)
+
+
+async def read_window(os_adapter, handle: int, title: str = "ventana") -> ScreenReading:
+    """Lee una ventana aunque otra la tape: la ventana se pinta a sí misma. Si
+    no se puede (minimizada, o sale en negro), la parte de la pantalla donde está."""
+    capture = getattr(os_adapter, "capture_window", None)
+    shot = await asyncio.to_thread(capture, handle) if capture is not None else None
+    if shot is not None:
+        png, origin, size = shot
+        return await read_png(png, origin, size, title=title)
+    rect = os_adapter.window_rect(handle)
+    if rect is None:
+        raise RuntimeError("No pude medir la ventana")
+    left, top, right, bottom = rect
+    return await read_screen({"left": left, "top": top, "width": right - left, "height": bottom - top},
+                             title=title)
 
 
 async def read_screen(box: dict[str, int] | None = None, title: str = "pantalla",

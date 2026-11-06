@@ -2,10 +2,9 @@
 import asyncio
 
 import numpy as np
-import pytest
 
 from nova.tts import chatterbox_engine as cb
-from nova.tts.chatterbox_engine import ChatterboxEngine, OUTPUT_RATE
+from nova.tts.chatterbox_engine import ChatterboxEngine
 
 
 def _engine(tomas, oidos=()):

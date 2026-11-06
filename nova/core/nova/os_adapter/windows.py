@@ -31,7 +31,7 @@ from pathlib import Path
 
 import psutil
 
-from .base import AppInfo, WindowInfo
+from .base import AppInfo, TabInfo, WindowInfo
 
 log = logging.getLogger("nova.os.windows")
 
@@ -134,10 +134,31 @@ def _ps_quote(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _dpi_aware() -> None:
+    """Todo en píxeles físicos: medidas de ventanas, capturas y clics.
+
+    Sin esto el proceso no declaraba escalado y con la pantalla al 125 % cada
+    llamada usaba una escala distinta (GetWindowRect y SetCursorPos lógicas,
+    DWM y las capturas físicas). Funcionaba de rebote porque mss lo activa la
+    primera vez que captura; antes de esa primera captura, un clic caía en otro
+    sitio.
+    """
+    try:
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))   # PER_MONITOR_AWARE_V2
+        return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        pass
+
+
 class WindowsAdapter:
     name = "windows"
 
     def __init__(self) -> None:
+        _dpi_aware()
         self._apps: list[AppInfo] = []
         self._apps_loaded_at = 0.0
 
@@ -348,7 +369,104 @@ class WindowsAdapter:
             return None
         return (rect.left, rect.top, rect.right, rect.bottom)
 
+    def window_at(self, x: int, y: int) -> int:
+        """La ventana de primer nivel que se ve en ese punto de la pantalla."""
+        point = wintypes.POINT(int(x), int(y))
+        handle = user32.WindowFromPoint(point)
+        return int(user32.GetAncestor(handle, 2) or 0) if handle else 0     # GA_ROOT
+
+    def capture_window(self, handle: int):
+        """La imagen de una ventana aunque otra la tape (Zoom, una notificación).
+
+        PrintWindow con PW_RENDERFULLCONTENT le pide a la ventana que se pinte
+        a sí misma, en vez de copiar la pantalla. Devuelve (png, origen, tamaño)
+        en píxeles de pantalla, o None si no se pudo (minimizada, o la ventana
+        se pinta en negro, que pasa con algunas aceleradas por GPU).
+        """
+        import io
+
+        from PIL import Image
+
+        if user32.IsIconic(wintypes.HWND(handle)):
+            return None
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(wintypes.HWND(handle), ctypes.byref(rect)):
+            return None
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        gdi32 = ctypes.windll.gdi32
+        window_dc = user32.GetWindowDC(wintypes.HWND(handle))
+        memory_dc = gdi32.CreateCompatibleDC(window_dc)
+        bitmap = gdi32.CreateCompatibleBitmap(window_dc, width, height)
+        try:
+            gdi32.SelectObject(memory_dc, bitmap)
+            if not user32.PrintWindow(wintypes.HWND(handle), memory_dc, 2):
+                return None
+
+            class _Header(ctypes.Structure):
+                _fields_ = [("size", wintypes.DWORD), ("width", ctypes.c_long), ("height", ctypes.c_long),
+                            ("planes", wintypes.WORD), ("bits", wintypes.WORD),
+                            ("compression", wintypes.DWORD), ("image_size", wintypes.DWORD),
+                            ("x_ppm", ctypes.c_long), ("y_ppm", ctypes.c_long),
+                            ("used", wintypes.DWORD), ("important", wintypes.DWORD)]
+
+            header = _Header(ctypes.sizeof(_Header), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
+            pixels = ctypes.create_string_buffer(width * height * 4)
+            if not gdi32.GetDIBits(memory_dc, bitmap, 0, height, pixels, ctypes.byref(header), 0):
+                return None
+        finally:
+            gdi32.DeleteObject(bitmap)
+            gdi32.DeleteDC(memory_dc)
+            user32.ReleaseDC(wintypes.HWND(handle), window_dc)
+        image = Image.frombuffer("RGB", (width, height), pixels, "raw", "BGRX", 0, 1)
+        if max(image.convert("L").getextrema()) < 16:          # pintada en negro
+            return None
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        return out.getvalue(), (rect.left, rect.top), (width, height)
+
     # ------------------------------------------------------------- archivos
+    def _tab_elements(self, handle: int) -> list:
+        """Las pestañas de una ventana de navegador, por accesibilidad.
+
+        Con teclado sólo se ve el título de la pestaña activa, y recorrerlas con
+        Ctrl+Tab no vale: Opera y Firefox alternan entre las dos últimas. La
+        barra de pestañas sí se expone: las lee todas en ~0,1 s, sin cambiar de
+        pestaña y con la ventana minimizada (medido en Opera GX).
+        """
+        import comtypes
+        import comtypes.client
+
+        comtypes.CoInitialize()
+        comtypes.client.GetModule("UIAutomationCore.dll")
+        from comtypes.gen import UIAutomationClient as uia
+
+        automation = comtypes.client.CreateObject(uia.CUIAutomation, interface=uia.IUIAutomation)
+        condition = automation.CreatePropertyCondition(uia.UIA_ControlTypePropertyId,
+                                                       uia.UIA_TabItemControlTypeId)
+        found = automation.ElementFromHandle(handle).FindAll(uia.TreeScope_Descendants, condition)
+        elements = [found.GetElement(i) for i in range(found.Length)] if found else []
+        return [(element, element.GetCurrentPattern(uia.UIA_SelectionItemPatternId)
+                 .QueryInterface(uia.IUIAutomationSelectionItemPattern))
+                for element in elements]
+
+    def browser_tabs(self, handle: int) -> list[TabInfo]:
+        try:
+            return [TabInfo(index, element.CurrentName or "", bool(pattern.CurrentIsSelected))
+                    for index, (element, pattern) in enumerate(self._tab_elements(handle))]
+        except Exception as exc:
+            log.debug("no pude leer las pestañas: %s", exc)
+            return []
+
+    def select_tab(self, handle: int, index: int) -> bool:
+        try:
+            self._tab_elements(handle)[index][1].Select()
+            return True
+        except Exception as exc:
+            log.warning("no pude cambiar a la pestaña %d: %s", index, exc)
+            return False
+
     def user_folders(self) -> dict[str, str]:
         """Carpetas del usuario, incluidas las redirigidas a OneDrive."""
         home = Path.home()

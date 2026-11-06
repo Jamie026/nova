@@ -25,17 +25,6 @@ def _whisper(sizes: list[str]) -> None:
         print(path)
 
 
-def _wake_word() -> None:
-    try:
-        import openwakeword.utils as utils
-    except ImportError:
-        print("  openwakeword no está instalado; se salta")
-        return
-    print("  openwakeword hey_jarvis…", end=" ", flush=True)
-    utils.download_models(["hey_jarvis"])
-    print("ok")
-
-
 def _chatterbox() -> bool:
     try:
         from chatterbox.tts_turbo import REPO_ID
@@ -61,14 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     from .stt.faster_whisper_stt import JUDGE_MODEL
 
     sizes: list[str] = []
-    for size in (config.get("stt.model", "medium"), JUDGE_MODEL, config.get("wake.model", "tiny")):
+    for size in (config.get("stt.model", "large-v3"), JUDGE_MODEL, config.get("wake.model", "tiny")):
         if size not in sizes:
             sizes.append(size)
 
     print("== Modelos de Whisper ==")
     _whisper(sizes)
-    print("== Palabra activadora ==")
-    _wake_word()
     if not args.sin_voz:
         print("== Voz clonada (Chatterbox Turbo) ==")
         _chatterbox()

@@ -44,7 +44,9 @@ flujo).
 |---|---|---|
 | Interfaz | Electron 31 + TypeScript estricto | Ventana transparente, `always-on-top`, multimonitor y `showInactive` (aparecer sin robar el foco) funcionan y están documentados en Windows 11. El renderer es web puro, así que migrar a Tauri más adelante no obliga a reescribir la interfaz. |
 | Núcleo | Python 3.10+, asyncio | Es donde viven las librerías de audio y voz. Un único bucle de eventos evita candados entre micrófono, modelo y síntesis. |
-| Palabra activadora | Porcupine, con alternativa local por transcripción | ~1 % de CPU en reposo, que es el requisito real de algo que corre doce horas. openWakeWord obligaría a entrenar un modelo para «Nova» antes de poder probar nada. |
+| Palabra activadora | «Corrin», por transcripción local (Whisper tiny) con doble lectura; Porcupine opcional | Reconoce cualquier palabra sin entrenar un modelo ni pedir claves. La segunda lectura, sin pista, evita que «corrió» o «corren» la despierten. Porcupine (~1 % de CPU) sólo si hay clave y un .ppn de «Corrin»; openWakeWord nunca se usa como caída, porque cambiaría la palabra. |
+| OCR (pantalla e imágenes) | RapidOCR (PP-OCR sobre ONNX, CPU) | Medido frente al OCR de Windows: 97 % frente a 92 % de textos bien leídos en pantallas de interfaz, y 0 frente a 31 montos de 192 mal leídos sin avisar en comprobantes. Gratis y sin internet. Las ventanas se leen con PrintWindow, así que una ventana encima (Zoom compartiendo) no tapa la lectura. |
+| Documentos | openpyxl, pdfplumber (+ pypdfium2) | Excel y CSV para listas de clientes; PDF con texto se lee exacto, PDF escaneado pasa por el OCR. |
 | VAD | webrtcvad | C puro, decide en microsegundos, sin modelo que cargar. Se ejecuta 100 veces por segundo: aquí la simplicidad **es** rendimiento. |
 | Transcripción | faster-whisper local | DeepSeek no ofrece STT. Local significa latencia estable, coste cero y audio que no sale de la máquina. |
 | Modelo | DeepSeek vía SDK compatible con OpenAI | Soporta *function calling*, que es lo que permite que el modelo elija herramientas declaradas en vez de inventar comandos. |
@@ -455,14 +457,13 @@ y cuesta horas encontrar.
 * **Borrar, mover y renombrar archivos.** Leer y copiar sí están (§9); modificar
   el disco no. Es la capacidad cuyo fallo no se deshace, y entra con papelera de
   reciclaje y riesgo alto, no antes.
-* **Visión del escritorio (OCR).** Localizar un botón por su texto haría a
-  `click_at` fiable en aplicaciones sin atajos de teclado. Cuesta latencia y un
-  modelo más; entra cuando aparezca un caso que los atajos no resuelvan.
 * **Streaming del modelo.** Reduciría unos cientos de milisegundos, pero
   complica bastante el troceado del TTS y la cancelación. Hay cosas más baratas
   que optimizar primero.
-* **Interpretar las capturas con un modelo de visión.** Nova las toma y las
-  mueve, pero no las «mira»: en el navegador, el árbol de accesibilidad cubre
-  casi todo a una fracción del coste y la latencia.
+* **Interpretar las capturas con un modelo de visión.** Nova lee su texto con
+  OCR, pero no «mira» la imagen. Un modelo de visión local no cabe en una GPU de
+  6 GB junto a Whisper y la voz clonada, e inventa cifras creíbles sin dejar
+  rastro; para comprobantes, el OCR con su confianza y la doble comprobación del
+  monto es más seguro.
 * **Resumen automático de la conversación.** Hace falta a partir de sesiones
   largas; con la ventana deslizante actual todavía no duele.

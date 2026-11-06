@@ -32,11 +32,11 @@
           <div class="field">
             <label for="wake-engine">Detección de palabra</label>
             <select id="wake-engine" data-path="wake.engine">
-              <option value="porcupine">Porcupine — local, ligero</option>
               <option value="whisper">Transcripción local — sin registro</option>
+              <option value="porcupine">Porcupine — local, ligero</option>
               <option value="off">Desactivada</option>
             </select>
-            <p class="hint">Porcupine necesita una clave gratuita de Picovoice en el archivo .env.</p>
+            <p class="hint">Porcupine necesita una clave de Picovoice y un archivo .ppn de la palabra.</p>
           </div>
           <div class="field">
             <label for="wake-keyword">Palabra activadora</label>
@@ -52,9 +52,9 @@
             <select id="stt-model" data-path="stt.model">
               <option value="tiny">tiny — el más rápido</option>
               <option value="base">base</option>
-              <option value="small">small — equilibrio recomendado</option>
+              <option value="small">small</option>
               <option value="medium">medium</option>
-              <option value="large-v3">large-v3 — el más preciso</option>
+              <option value="large-v3">large-v3 — el más preciso (predeterminado)</option>
             </select>
           </div>
           <div class="field">
@@ -76,9 +76,14 @@
             <input type="checkbox" id="barge-in" data-path="session.barge_in" />
           </div>
           <div class="field">
-            <label for="follow-up">Conversación continua</label>
+            <label for="sleep-on-idle">Dormirse sola si nadie le habla</label>
+            <input type="checkbox" id="sleep-on-idle" data-path="session.sleep_on_idle" />
+            <p class="hint">Apagado: una vez despierta, sólo se duerme con «descansa» o con el botón de interrumpir.</p>
+          </div>
+          <div class="field">
+            <label for="follow-up">Segundos antes de dormirse</label>
             <input type="number" id="follow-up" data-path="session.follow_up_seconds" min="0" max="120" />
-            <p class="hint">Segundos que sigue escuchando sin repetir la palabra activadora.</p>
+            <p class="hint">Sólo cuenta si «Dormirse sola» está activado.</p>
           </div>
           <div class="actions"><button type="button" class="primary" data-save>Guardar cambios</button></div>
         </section>

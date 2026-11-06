@@ -18,7 +18,7 @@ import logging
 import time
 from typing import Any, Optional
 
-from .agent import consent, dismissal
+from .agent import consent, dismissal, spelling
 from .agent.orchestrator import Orchestrator
 from .audio.format import FRAME_BYTES, FRAME_MS
 from .audio.mic import MicrophoneStream, frame_rms, rms_level
@@ -38,6 +38,9 @@ _ECHO_MARGIN = 1.8            # para interrumpir hay que superar el eco por este
 # contesta por escrito.
 _TTS_RETRY_DELAYS_S = (30, 60, 120, 300, 600)
 _WINERROR_COMMIT_LIMIT = 1455   # «El archivo de paginación es demasiado pequeño»
+_WAKE_PENDING_MAX_BYTES = 3 * 32_000   # 3 s: lo que el detector pesado puede tener pendiente
+_DICTATION_START_TIMEOUT_S = 20.0      # lo que se espera a que empiece a dictar
+_DICTATION_MAX_BYTES = 60 * 32_000     # un correo larguísimo, despacio, cabe en 60 s
 
 
 class VoiceSession:
@@ -64,6 +67,18 @@ class VoiceSession:
             end_ms=int(config.get("vad.end_ms", 800)),
         ))
         self._barge_min_level = float(config.get("session.barge_in_min_level", 0.04))
+        # VAD aparte para dictar letra por letra: entre letra y letra se piensa,
+        # y con los 800 ms normales el dictado se cortaba en la primera pausa.
+        self._dictation_vad = VoiceActivityDetector(VadConfig(
+            aggressiveness=int(config.get("vad.aggressiveness", 2)),
+            start_ms=int(config.get("vad.start_ms", 150)),
+            end_ms=int(config.get("session.dictation_pause_ms", 2500)),
+        ))
+        self._dictation: Optional[asyncio.Future] = None
+        # Mientras un trabajo en segundo plano está enviando (WhatsApp en lote,
+        # facturas), Nova no se duerme: el usuario la ve despierta y le puede
+        # hablar sin la palabra activadora. Ver keep_awake().
+        self._keep_awake = False
         # Eco medido en cada respuesta: ver _handle_barge_in.
         self._audio_since: float | None = None
         self._echo_samples: list[float] = []
@@ -89,6 +104,9 @@ class VoiceSession:
         self._turn_task: Optional[asyncio.Task] = None
         self._partial_task: Optional[asyncio.Task] = None
         self._wake_task: Optional[asyncio.Task] = None
+        self._greeting_task: Optional[asyncio.Task] = None
+        # Audio que llega mientras el detector pesado decodifica (ver _handle_idle).
+        self._wake_pending = bytearray()
         self._pending_confirms: dict[str, asyncio.Future] = {}
         # Mientras hay una confirmación pendiente y la pregunta ya sonó, el
         # micrófono va a buscar un «sí» o un «no» en vez de una orden.
@@ -221,6 +239,8 @@ class VoiceSession:
             try:
                 if self._confirm_id is not None:
                     await self._handle_confirm_audio(frame)
+                elif self._dictation is not None:
+                    await self._handle_dictation_audio(frame)
                 elif state in (AgentState.IDLE, AgentState.SLEEPING):
                     await self._handle_idle(frame)
                 elif state is AgentState.LISTENING:
@@ -243,16 +263,24 @@ class VoiceSession:
             if self._wake.process(frame):
                 await self._on_wake_detected()
             return
-        # Motor pesado: una sola detección en vuelo; las tramas que lleguen
-        # mientras tanto se descartan en vez de encolarse sin límite.
+        # Motor pesado: una sola detección en vuelo. Lo que llega mientras tanto
+        # se guarda para la siguiente, porque tirarlo dejaba huecos en cada
+        # ventana y podía partir la palabra activadora por la mitad. Con tope:
+        # si se atrasa, lo que cuenta es lo último que se dijo.
+        self._wake_pending.extend(frame)
+        if len(self._wake_pending) > _WAKE_PENDING_MAX_BYTES:
+            del self._wake_pending[:-_WAKE_PENDING_MAX_BYTES]
         if self._wake_task and not self._wake_task.done():
             return
+        payload = bytes(self._wake_pending)
+        self._wake_pending.clear()
 
-        async def _detect(payload: bytes) -> None:
-            if await asyncio.to_thread(self._wake.process, payload):
+        async def _detect(audio: bytes) -> None:
+            if await asyncio.to_thread(self._wake.process, audio):
+                self._wake_pending.clear()
                 await self._on_wake_detected()
 
-        self._wake_task = asyncio.create_task(_detect(frame), name="wake-detect")
+        self._wake_task = asyncio.create_task(_detect(payload), name="wake-detect")
 
     async def _on_wake_detected(self) -> None:
         if self._machine.state not in (AgentState.IDLE, AgentState.SLEEPING):
@@ -423,7 +451,10 @@ class VoiceSession:
         await self._machine.to(AgentState.LISTENING)
         await self._ipc.broadcast(status("Escuchando..."))
         if greet and self._config.get("session.speak_greeting", False):
-            asyncio.create_task(self._tts.speak(self._config.get("session.greeting", "Te escucho.")))
+            # Se guarda la tarea: una sin referencia puede recogerla el recolector
+            # de basura a medias (documentado en asyncio.create_task).
+            self._greeting_task = asyncio.create_task(
+                self._tts.speak(self._config.get("session.greeting", "Te escucho.")), name="greeting")
 
     def _schedule_partial(self, pcm: bytes) -> None:
         if self._partial_task and not self._partial_task.done():
@@ -589,6 +620,8 @@ class VoiceSession:
     async def _check_follow_up_timeout(self) -> None:
         if self._machine.state is not AgentState.LISTENING or self._capturing:
             return
+        if self._keep_awake or not self._config.get("session.sleep_on_idle", False):
+            return
         if time.monotonic() < self._follow_up_until:
             return
         log.debug("fin de la ventana de seguimiento; vuelvo a escucha pasiva")
@@ -596,6 +629,65 @@ class VoiceSession:
         await self._ipc.broadcast(status(""))
         await asyncio.sleep(0.2)
         await self._machine.to(AgentState.IDLE)
+
+    # ----------------------------------------------------------------- dictado
+    async def request_dictation(self, prompt: str) -> str:
+        """Pide algo letra por letra y devuelve lo transcrito («» si no dijo nada).
+
+        Va por separado de la escucha normal porque necesita otra paciencia: el
+        usuario hace pausas entre letras, y «ele» o «ge» sueltas no son una orden
+        ni un «para» que deba interpretar el bucle de trabajo.
+        """
+        await self._ipc.broadcast(status(prompt))
+        await self._speak(await self._agent.translate_for_speech(prompt))
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._dictation_vad.reset()
+        self._capturing = False
+        self._utterance.clear()
+        self._mic.drain()          # fuera el eco de la pregunta
+        self._preroll.clear()
+        self._dictation = future
+        await self._ipc.broadcast(status("Te escucho: dilo letra por letra"))
+        try:
+            return await asyncio.wait_for(future, timeout=_DICTATION_START_TIMEOUT_S + 60)
+        except asyncio.TimeoutError:
+            return ""
+        finally:
+            self._dictation = None
+            self._capturing = False
+            self._utterance.clear()
+            await self._ipc.broadcast(status(""))
+
+    async def _handle_dictation_audio(self, frame: bytes) -> None:
+        event = self._dictation_vad.push(frame)
+        if not self._capturing:
+            if event is not VadEvent.SPEECH_START:
+                self._preroll.append(frame)
+                return
+            self._capturing = True
+            self._utterance.clear()
+            self._utterance.extend(b"".join(self._preroll))
+            self._preroll.clear()
+        self._utterance.extend(frame)
+        if event is VadEvent.SPEECH_END or len(self._utterance) > _DICTATION_MAX_BYTES:
+            await self._finish_dictation()
+
+    async def _finish_dictation(self) -> None:
+        audio = bytes(self._utterance)
+        future = self._dictation
+        self._dictation = None     # lo que siga sonando no es parte del dictado
+        self._capturing = False
+        self._utterance.clear()
+        await self._ipc.broadcast(status("Pensando..."))
+        # Sin filtro de alucinaciones: «a, a, a» es un dictado, no Whisper inventando.
+        result = await self._stt.transcribe(audio, final=True, strict=False,
+                                            prompt=spelling.SPELLING_PROMPT)
+        text = result.text.strip()
+        log.info("dictado: %r", text or "(vacío)")
+        if text:
+            await self._ipc.broadcast(transcript(text, partial=False))
+        if future is not None and not future.done():
+            future.set_result(text)
 
     # ----------------------------------------------------------- confirmaciones
     async def request_confirmation(self, request_id: str, text: str, risk: str) -> bool:
@@ -723,13 +815,50 @@ class VoiceSession:
     def apply_live_settings(self) -> list[str]:
         """Lo que se puede cambiar sin reiniciar. Devuelve qué se aplicó."""
         applied: list[str] = []
-        keyword = str(self._config.get("wake.keyword", "nova"))
+        keyword = str(self._config.get("wake.keyword", "corrin"))
         setter = getattr(self._wake, "set_keywords", None)
         if setter is not None:
             setter(keyword)
             applied.append(f"palabra activadora «{keyword}»")
         self._barge_min_level = float(self._config.get("session.barge_in_min_level", 0.04))
         return applied
+
+    # ------------------------------------------------- trabajos en segundo plano
+    def is_free(self) -> bool:
+        """¿Puede un trabajo en segundo plano usar el ratón y el teclado ahora?
+        Sí si Nova está en reposo o escuchando sin que nadie hable; no si está
+        pensando, ejecutando, hablando o esperando un «sí» o un dictado."""
+        return (self._machine.state in (AgentState.IDLE, AgentState.SLEEPING, AgentState.LISTENING)
+                and not self._capturing and self._confirm_id is None and self._dictation is None)
+
+    async def keep_awake(self, active: bool) -> None:
+        """Despierta mientras un trabajo envía; al acabar, la ventana de
+        seguimiento normal y luego a dormir, como después de cualquier turno."""
+        self._keep_awake = active
+        if active and self._machine.state in (AgentState.IDLE, AgentState.SLEEPING):
+            await self._machine.to(AgentState.LISTENING)
+            self._vad.reset()
+            self._capturing = False
+            self._preroll.clear()
+        if not active:
+            self._follow_up_until = time.monotonic() + float(self._config.get("session.follow_up_seconds", 12))
+
+    async def announce(self, text: str) -> None:
+        """Dice un aviso de un trabajo en segundo plano, si no interrumpe nada.
+        Pasa por SPEAKING para que el eco de su propia voz no se tome por una
+        orden y para que el usuario pueda cortarla hablando encima."""
+        if not self.is_free():
+            return
+        previous = self._machine.state
+        await self._machine.to(AgentState.SPEAKING)
+        try:
+            await self._speak(text)
+        finally:
+            if self._machine.state is AgentState.SPEAKING:
+                if self._keep_awake or previous is AgentState.LISTENING:
+                    await self._begin_listening(greet=False)
+                else:
+                    await self._machine.to(AgentState.IDLE)
 
     async def force_wake(self) -> None:
         if self._machine.state in (AgentState.IDLE, AgentState.SLEEPING):

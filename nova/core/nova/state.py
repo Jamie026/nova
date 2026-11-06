@@ -30,7 +30,8 @@ TRANSITIONS: dict[AgentState, set[AgentState]] = {
     # IDLE -> SPEAKING: la despedida de «descansa» escrita en el panel de texto.
     S.IDLE: {S.WAKE_WORD_DETECTED, S.LISTENING, S.THINKING, S.SPEAKING, S.ERROR, S.SLEEPING},
     S.WAKE_WORD_DETECTED: {S.LISTENING, S.ERROR, S.IDLE},
-    S.LISTENING: {S.THINKING, S.SLEEPING, S.IDLE, S.ERROR, S.LISTENING},
+    # LISTENING -> SPEAKING: avisos de un trabajo en segundo plano (ver VoiceSession.announce).
+    S.LISTENING: {S.THINKING, S.SLEEPING, S.IDLE, S.ERROR, S.LISTENING, S.SPEAKING},
     S.THINKING: {S.EXECUTING, S.SPEAKING, S.LISTENING, S.ERROR, S.IDLE},
     S.EXECUTING: {S.THINKING, S.SPEAKING, S.EXECUTING, S.ERROR, S.IDLE, S.LISTENING},
     # SPEAKING -> EXECUTING: el modelo dijo un preámbulo («Sure, opening it…»)

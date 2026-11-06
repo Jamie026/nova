@@ -16,6 +16,8 @@ raro sin levantar nada.
 """
 from __future__ import annotations
 
+from .tone import naturalize
+
 import re
 
 # Se acepta con y sin negritas, con dos puntos o guion, y en cualquier orden. Un
@@ -55,14 +57,14 @@ def split_bilingual(reply: str) -> tuple[str, str]:
         if current is not None and line.strip():
             current.append(line.strip())
 
-    hablado = " ".join(spoken).strip()
-    mostrado = " ".join(subtitle).strip()
+    hablado = naturalize(" ".join(spoken).strip())
+    mostrado = naturalize(" ".join(subtitle).strip())
 
     if hablado and mostrado:
         return hablado, mostrado
     # Con una sola etiqueta, esa es la respuesta entera: el modelo no dio la otra
     # versión, así que se usa la misma para las dos cosas.
-    unica = (hablado or mostrado or reply).strip()
+    unica = (hablado or mostrado or naturalize(reply)).strip()
     return unica, unica
 
 

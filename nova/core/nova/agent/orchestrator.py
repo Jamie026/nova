@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable
 from ..llm.base import LlmProvider, LlmResponse, ToolCall
 from ..tools.registry import ToolRegistry, ToolResult
 from .bilingual import split_bilingual, spoken_so_far
+from .tone import naturalize
 from .memory import ActionLog, ActionRecord, ConversationMemory, Preferences
 from .prompts import build_system_prompt
 
@@ -254,7 +255,8 @@ class Orchestrator:
 
     def _split(self, raw: str) -> tuple[str, str]:
         if not self._bilingual:
-            return raw, raw
+            clean = naturalize(raw)
+            return clean, clean
         return split_bilingual(raw)
 
     def _render_history(self, spoken: str, subtitle: str) -> str:
@@ -289,7 +291,9 @@ class Orchestrator:
             response = await self._llm.chat([
                 {"role": "system", "content": (
                     f"Traduce al {_language_name(self._speak_language)} el texto del usuario, "
-                    "como una oración completa y natural de al menos seis palabras. "
+                    "como una oración completa de al menos seis palabras, dicha como la diría "
+                    "una persona en una conversación normal: cercana, natural, con contracciones "
+                    "y sin guiones. "
                     "Las marcas como [[0]] o [[1]] se copian tal cual, sin tocarlas ni "
                     "moverlas de sitio. Responde sólo con la traducción.")},
                 {"role": "user", "content": protected},
@@ -300,6 +304,7 @@ class Orchestrator:
             return text
         if not translated:
             return text
+        translated = naturalize(translated)
         for index, literal in enumerate(literals):
             translated = translated.replace(f"[[{index}]]", literal)
         # Si el modelo se comió alguna marca, mejor la frase original entera que

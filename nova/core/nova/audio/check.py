@@ -10,7 +10,6 @@ sesión estuviera rota, este diagnóstico seguiría siendo de fiar.
 """
 from __future__ import annotations
 
-import sys
 import time
 
 import numpy as np
@@ -119,13 +118,13 @@ def _probar_wake(audio: np.ndarray, config) -> None:
     print(f"  {nombre}: NO detectada. Puntuación máxima {mejor:.3f} en el "
           f"segundo {mejor_t:.1f} (hace falta {umbral}).")
     if mejor >= umbral * 0.5:
-        print(f"    Te quedaste cerca. Baja el umbral en settings.json:")
+        print("    Te quedaste cerca. Baja el umbral en settings.json:")
         print(f'      "wake": {{ "oww_threshold": {max(0.2, mejor * 0.8):.2f} }}')
     elif mejor < 0.01:
         print("    El modelo no reconoce nada parecido. 'hey jarvis' está entrenado")
         print("    con pronunciación inglesa; si lo dices a la española puede que no")
         print("    llegue nunca. Alternativa inmediata, en el .env:")
-        print("      NOVA_WAKE_ENGINE=whisper     (reconoce 'Nova', gasta más CPU)")
+        print("      NOVA_WAKE_ENGINE=whisper     (reconoce 'Corrin', gasta más CPU)")
 
 
 def _probar_stt(audio: np.ndarray, config) -> None:
@@ -133,7 +132,7 @@ def _probar_stt(audio: np.ndarray, config) -> None:
     import asyncio
 
     stt = FasterWhisperStt(
-        model=config.get("stt.model", "small"),
+        model=config.get("stt.model", "large-v3"),
         cpu_model=config.get("stt.cpu_model", "tiny"),
         device=config.get("stt.device", "auto"),
         language=config.get("language", "es"),
@@ -180,7 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     config = Config.load()
     device = int(args.device) if args.device is not None else config.get("audio.input_device")
 
-    print(f"Grabando {args.segundos:.0f} segundos. Di:  «Hey Jarvis, abre Spotify»")
+    palabra = str(config.get("wake.keyword", "corrin")).split(",")[0].strip().capitalize()
+    print(f"Grabando {args.segundos:.0f} segundos. Di:  «{palabra}, abre Spotify»")
     print("  3...", end="", flush=True); time.sleep(1)
     print(" 2...", end="", flush=True); time.sleep(1)
     print(" 1...", end="", flush=True); time.sleep(1)

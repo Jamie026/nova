@@ -31,8 +31,13 @@ class IpcServer:
         self._handlers[command] = handler
 
     async def start(self) -> None:
+        # origins=[None]: sólo conexiones SIN cabecera Origin, que es como se conecta
+        # la app (el cliente `ws` de Node). Un navegador siempre la envía, así que
+        # una página web abierta en Opera no puede conectarse a 127.0.0.1:8765 y
+        # mandarle órdenes a Nova («envía un WhatsApp a…»): se la rechaza con 403.
         self._server = await websockets.serve(
-            self._handle_client, self._host, self._port, ping_interval=20, max_size=2 ** 20
+            self._handle_client, self._host, self._port, ping_interval=20, max_size=2 ** 20,
+            origins=[None],
         )
         log.info("IPC escuchando en ws://%s:%s", self._host, self._port)
 

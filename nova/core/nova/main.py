@@ -40,7 +40,8 @@ async def _serve(app: NovaApp) -> None:
 
     await app.start()
     try:
-        await stop.wait()
+        await asyncio.wait({asyncio.create_task(stop.wait()), asyncio.create_task(app.stop_requested.wait())},
+                           return_when=asyncio.FIRST_COMPLETED)
     finally:
         await app.shutdown()
 

@@ -125,36 +125,134 @@ el Bloc de notas o VS Code.
     Tu clave la sacas de https://platform.deepseek.com → API keys.
     Pégala sin comillas y sin espacios alrededor del signo igual.
 
-3.2 MUY RECOMENDADO — LA PALABRA ACTIVADORA
+3.1b CORREO Y WHATSAPP
 
-    PICOVOICE_ACCESS_KEY=tu_clave_de_picovoice
-    NOVA_WAKE_KEYWORD_PATH=C:\\ruta\\a\\nova_es_windows.ppn
+    "Envia un correo a juan@gmail.com diciendo..." abre Gmail con todo puesto y
+    te pregunta antes de enviar. Si dices que si, lo envia.
 
-    Para qué sirve: detectar la palabra "Nova" gastando ~1% de CPU en reposo.
-    Es la opción más barata de las tres, pero no es la única, y las otras dos no
-    piden ninguna clave:
+    "Manda un WhatsApp a Ana diciendo..." busca el contacto, deja el mensaje
+    escrito y te pregunta, nombrando el contacto que leyo en pantalla. Si dices
+    que si, lo envia. Si hay varios que encajan, pregunta cual.
 
-      porcupine     ~1 % de CPU   palabra "Nova"        necesita AccessKey
-      openwakeword  ~4 % de CPU   "hey jarvis" y pocas  sin clave, sin registro
-      whisper       ~40 % de un   cualquier palabra     sin clave; el más caro
-                    núcleo
+    Si solo dices "preparalo", se queda escrito sin enviar. Antes de enviar
+    comprueba en pantalla que sigue ahi lo preparado; si algo cambio, no envia.
 
-    Si no pones la clave, Nova cae sola a openwakeword, que se descarga sus
-    modelos la primera vez (7 MB) y despierta cuando dices "hey Jarvis". Para
-    forzar uno u otro, en el .env:
+    Si no tiene la direccion, no entiende el nombre o no encuentra el contacto,
+    te pide dictarlo LETRA POR LETRA y te lo repite para que lo confirmes:
+        "jota, u, a, ene, arroba, gmail, punto, com"
+    Puedes hacer pausas: el dictado termina tras 2,5 s de silencio (se ajusta con
+    session.dictation_pause_ms). Para el guion di "guion", y para las dudosas,
+    "be larga", "ve chica", "doble u", "i griega". Di "cancela" para dejarlo.
 
-        NOVA_WAKE_ENGINE=openwakeword     (o porcupine, whisper, off)
+    Donde abre: WhatsApp usa la app si esta instalada. Si no, la pestana de
+    WhatsApp Web que tengas abierta, y si no hay, una nueva. Gmail igual: tu
+    pestana abierta o una nueva. Nunca duplica ni pisa la que estabas mirando.
+    Mientras prepara el mensaje mueve el raton y escribe: no toques nada esos
+    segundos. WhatsApp Web tiene que estar en espanol o ingles.
 
-    El detector por transcripción (whisper) es el único que reconoce la palabra
-    "Nova" sin clave, pero decodifica audio todo el rato: es un último recurso,
-    no el modo recomendado para dejarla encendida el día entero.
+3.1c EXCEL, ENVIOS EN LOTE E IMAGENES
+
+    "Abre clientes.xlsx y manda a cada uno un WhatsApp: Hola {Nombre}, tu saldo
+    es {Monto}" lee el Excel (o CSV), arma un mensaje por fila y te pregunta UNA
+    vez con un resumen: cuantos, el primero, filas saltadas y cuanto tardara.
+    Lo envia en segundo plano, por plazos:
+        tandas de 20, 15 min de pausa, 5 s entre mensajes (10 s si son mas
+        de 20), tope de 150 al dia
+    Se cambia en settings.json, seccion "messaging". Antes de cada tanda avisa
+    10 s: en esos minutos Nova usa el raton y el teclado, no toques nada. Si
+    Nova esta ocupada contigo, espera. "Como va el envio" y "para el envio".
+    Lo enviado queda apuntado: si se corta y lo vuelves a pedir, no repite.
+    Salta filas sin telefono, repetidas o con datos vacios. Para numeros sin
+    prefijo de pais pon "messaging": {"country_code": "51"} o Nova lo pregunta.
+    OJO: WhatsApp puede bloquear una cuenta personal que manda muchos mensajes a
+    gente que no la tiene guardada. Para envios grandes y frecuentes, la via
+    correcta es WhatsApp Business API.
+
+    "Manda un WhatsApp al 987 654 321" escribe a un numero aunque no este
+    guardado, con la misma confirmacion antes de enviar.
+
+    "Lee el comprobante.png y manda el monto a Ana" lee el texto de la imagen
+    con RapidOCR: gratis y sin internet. Lee montos, nombres, fechas y
+    numeros; no describe fotos. Las cifras pueden salir con errores: revisalas
+    en la pregunta de confirmacion antes de decir que si.
+
+3.1d FACTURAS: COBRAR POR WHATSAPP
+
+    "Procesa las facturas de la carpeta Cobros con clientes.xlsx y manda a cada
+    uno: Hola {Nombre}, tu factura {Factura} es de {Moneda} {Monto}"
+
+    Las facturas pueden ser imagenes o PDF: el PDF que genera un sistema se lee
+    exacto, sin OCR; uno escaneado se lee como una foto. La lista de clientes
+    puede ser Excel (.xlsx), CSV o un PDF con la tabla (no escaneado).
+
+    Lee cada factura con RapidOCR (o el texto del PDF), DeepSeek saca el cliente y el monto
+    TOTAL a pagar, lo busca en el Excel y le manda el mensaje. NO se para por
+    factura ni pregunta: envia directo las seguras y al final te dice cuantas
+    salieron y cuales faltan, y deja "Nova - facturas <fecha>.xlsx" en la misma
+    carpeta (hojas Enviadas y Pendientes, con el motivo).
+
+    Es "segura" si: el monto aparece tal cual en la factura y se leyo sin duda;
+    el cliente se encontro por RUC/DNI o correo exactos, o por un nombre que
+    coincide entero (da igual el orden o las tildes) y sin otro cliente igual;
+    y tiene un telefono valido. Si no, queda pendiente. Las de monto dudoso las
+    puedes mandar luego con "manda tambien las dudosas" (eso SI pregunta, con la
+    lista de montos). Repetir la orden no duplica lo ya enviado.
+
+    Tambien puede mandar la factura misma (el PDF o la foto) en vez de un
+    mensaje: "...y mandale a cada uno su factura". Si ademas dictas un texto,
+    va como comentario del archivo. Si el texto no lleva {Monto}, no hace falta
+    que el monto se lea sin duda: el cliente lo ve en la propia factura.
+
+    Si al cliente no lo identifica el nombre sino otro dato, dilo: "guiate del
+    codigo de cliente" (o N de suministro, contrato, placa...). Nova busca ese
+    dato en cada factura y lo cruza con la columna del Excel que se llame asi,
+    o con la que lo contenga si no hay una con ese nombre. Solo usa ese dato, y
+    tiene que leerse sin duda: un codigo mal leido podria ser el de otro cliente.
+
+    Las columnas del Excel se reconocen solas (nombre, full name, cliente,
+    correo, email, celular, telefono, whatsapp, DNI, RUC...). En el mensaje
+    puedes usar {Nombre} {Monto} {Moneda} {Factura} {Fecha} {Correo} {Archivo}
+    o cualquier columna del Excel. Los envios van por plazos, como el lote.
+    Para que vuelva a preguntar antes de empezar: quita "process_invoices" de
+    security.auto_approve en settings.json. Usa DeepSeek: unos centimos por
+    cada cientos de facturas.
+
+3.1e CUANDO SE DUERME NOVA
+
+    Una vez despierta (con "Corrin" o Ctrl+Shift+Espacio), Nova sigue
+    escuchando sin que repitas "Corrin" y NO se duerme sola por mucho que
+    nadie le hable. Se duerme solo cuando le dices "descansa" o con el boton
+    de interrumpir (o Ctrl+Shift+X). Mientras esta despierta, todo lo que se
+    diga cerca del microfono le llega como orden: en una reunion con altavoces
+    o con gente hablando, mandala a descansar. Para que vuelva a dormirse sola
+    tras un rato: Ajustes > "Dormirse sola si nadie le habla".
+
+3.2 LA PALABRA ACTIVADORA: "CORRIN"
+
+    Nova se despierta con "Corrin" y con ninguna otra palabra. Funciona sin
+    clave ni registro con el motor whisper, que es el predeterminado:
+
+      whisper       ~25 % de GPU  cualquier palabra     sin clave; el predeterminado
+      porcupine     ~1 % de CPU   la de tu .ppn         necesita AccessKey y un .ppn
+      openwakeword  ~4 % de CPU   sólo "hey jarvis"     sólo si lo pides a mano
+
+    Si el motor no puede reconocer "Corrin", Nova lo avisa en el log y queda
+    Ctrl+Shift+Espacio para despertarla. Nunca cambia de palabra por su cuenta.
+    Para forzar un motor, en el .env:
+
+        NOVA_WAKE_ENGINE=whisper     (o porcupine, openwakeword, off)
+
+    Picovoice es opcional: sirve para gastar menos en reposo.
+
+        PICOVOICE_ACCESS_KEY=tu_clave_de_picovoice
+        NOVA_WAKE_KEYWORD_PATH=C:\ruta\a\corrin_es_windows.ppn
 
     Cómo conseguirla (es gratis y la clave aparece al instante; si te han
     mandado a un formulario de "contacto con ventas", estabas en el registro
     empresarial y no en el personal):
       1. Regístrate en https://console.picovoice.ai con una cuenta personal
       2. Copia tu AccessKey del panel → esa es PICOVOICE_ACCESS_KEY
-      3. Ve a "Porcupine" → crea una wake word con el texto "Nova"
+      3. Ve a "Porcupine" → crea una wake word con el texto "Corrin"
          → idioma español → plataforma Windows → descarga el archivo .ppn
       4. Guarda el .ppn donde quieras y pon su ruta completa en
          NOVA_WAKE_KEYWORD_PATH
@@ -165,13 +263,14 @@ el Bloc de notas o VS Code.
 
 3.3 OPCIONALES — descoméntalos sólo si los necesitas
 
-    NOVA_STT_MODEL=small
+    NOVA_STT_MODEL=large-v3
         Modelo de transcripción. Opciones: tiny, base, small, medium, large-v3.
-        "small" es el equilibrio bueno y es lo que se usa con GPU. Sin GPU,
-        Nova ignora esto y usa "tiny" (ajuste stt.cpu_model), porque "small" en
-        CPU tarda 1,7 s por frase y se nota muchísimo.
-        Con GPU y si quieres más precisión en nombres propios, "medium": pasa de
-        ~0,3 s a ~0,5 s y acierta cosas como "Discord" donde "small" oye "disco".
+        Por defecto "large-v3", el más preciso (~3 GB, lo descarga el setup o
+        "npm run models:download"). Si no está descargado, Nova arranca con el
+        mayor que haya y lo avisa en el log, en vez de quedarse esperando la
+        descarga sin oírte. Sin GPU usa "tiny" (ajuste stt.cpu_model).
+        Si vas justo de memoria (error 1455, la voz no carga), "medium" gasta
+        bastante menos y casi no se nota en la precisión.
 
     NOVA_TTS_VOICE=es-PE-CamilaNeural
         Voz de la respuesta. Otras en español: es-PE-AlexNeural,
@@ -590,10 +689,9 @@ No despierta, o no entiende lo que le digo
 
     usando el número que te dio mic:check.
 
-    Si el nivel está bien y aun así no despierta, mira en el log qué motor arrancó. Si dice "openWakeWord", la palabra
-    ya no es "Nova" sino "hey Jarvis": es el motor sin clave que reconoce sólo
-    unas pocas palabras fijas. Para volver a "Nova" sin clave, NOVA_WAKE_ENGINE=
-    whisper (gasta más CPU), o saca la clave de Picovoice (ver 3.2).
+    Si el nivel está bien y aun así no despierta, mira en el log qué motor arrancó. Si dice "openWakeWord", alguien
+    lo eligió a mano y la palabra es "hey Jarvis", no "Corrin": quita
+    NOVA_WAKE_ENGINE del .env y vuelve al motor whisper (ver 3.2).
 
     OJO CON "HEY JARVIS" SI HABLAS ESPAÑOL. El modelo está entrenado con
     pronunciación inglesa, y la J cambia mucho la cosa. Medido con la misma
@@ -610,14 +708,13 @@ No despierta, o no entiende lo que le digo
       1. Pronúncialo a la inglesa: "yei YAR-vis", con la J de "Jessica".
       2. Baja el umbral si mic:check dice que te quedaste cerca:
          "wake": { "oww_threshold": 0.35 }  en settings.json.
-      3. Vuelve a la palabra "Nova", que sí reconoce el español:
+      3. Vuelve a "Corrin", que es la palabra normal de Nova:
              NOVA_WAKE_ENGINE=whisper     en el .env
          Ese detector transcribe en vez de comparar huellas, así que entiende
-         "Nova" aunque Whisper lo oiga como "no va". Gasta más, pero desde que
-         usa la GPU la carga bajó del 115 % de un núcleo al 25 %.
+         "Corrin" aunque Whisper lo oiga como "Colin" o "Coring". Gasta más,
+         pero desde que usa la GPU la carga bajó del 115 % de un núcleo al 25 %.
 
-    Con el detector por transcripción, Nova reconoce la palabra transcribiendo. En español
-    Whisper oye "Nova" como "no va" muy a menudo, y eso ya está contemplado. Si
+    Con el detector por transcripción, Nova reconoce la palabra transcribiendo. Si
     aun así no despierta:
       - habla un poco más fuerte y separado del micrófono
       - arranca con NOVA_LOG_LEVEL=DEBUG y mira en la consola las líneas
@@ -651,8 +748,10 @@ Dice "listo, lo hice" y no ha hecho nada
     dicen "no encontré a nadie con ese nombre" en vez de "lo envié".
 
     Para "el segundo chat", "el de arriba", "ese botón": Nova lee la pantalla
-    con el OCR de Windows (read_screen) y hace clic en la línea que corresponda
-    (click_item).
+    con RapidOCR (read_screen) y hace clic en la línea que corresponda
+    (click_item). Antes de cada clic comprueba que en ese punto se ve la
+    ventana correcta: si otra la tapa (la barra de Zoom al compartir pantalla),
+    prueba otro punto de la misma caja, y si no hay ninguno libre, se para.
 
     PERMISOS. Tu settings.json tiene "security": { "medium": "auto", "high":
     "auto" }: Nova no pregunta nada de lo que pasa dentro de tu máquina (abrir,

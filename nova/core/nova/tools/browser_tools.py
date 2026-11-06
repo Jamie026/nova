@@ -15,6 +15,11 @@ _CDP_ONLY_HINT = ("Esa acción necesita control profundo del navegador y estás 
                   "que Nova lance su propio Chrome controlable.")
 
 
+def _plain(text: str) -> str:
+    table = str.maketrans("áéíóúüñ", "aeiouun")
+    return " ".join(str(text).lower().translate(table).split())
+
+
 def _tabs_summary(tabs) -> str:
     if not tabs:
         return "No hay pestañas abiertas"
@@ -61,14 +66,16 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
     async def browser_goto(url: str) -> ToolResult:
         if await _use_keyboard():
             page = await keyboard.goto(url)
-            return ToolResult(True, f"Abrí {url} en la pestaña actual de tu navegador ({page.title})")
+            where = ("en una pestaña nueva, para no cerrarte la que tenías abierta" if page.new_tab
+                     else "en la pestaña actual de tu navegador")
+            return ToolResult(True, f"Abrí {url} {where} ({page.title})", {"new_tab": page.new_tab})
         tab = await browser.goto(url)
         return ToolResult(True, f"Abrí {tab.title} ({tab.url})", {"url": tab.url})
 
     async def browser_new_tab(url: str = "") -> ToolResult:
         if await _use_keyboard():
             if not url:
-                page = await keyboard.goto("about:blank", new_tab=True)
+                page = await keyboard.new_tab()
             else:
                 page = await keyboard.goto(url, new_tab=True)
             return ToolResult(True, f"Pestaña nueva en tu navegador: {page.title or 'en blanco'}")
@@ -78,8 +85,7 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
     async def browser_close_tab(index: int | None = None) -> ToolResult:
         if await _use_keyboard():
             if index is not None:
-                return ToolResult(False, "En tu navegador sólo puedo cerrar la pestaña activa (Ctrl+W); "
-                                         "cambia a ella primero.")
+                await keyboard.switch_index(index)
             page = await keyboard.close_tab()
             return ToolResult(True, f"Cerré la pestaña. Ahora: {page.title}")
         zero_based = None if index is None else index - 1
@@ -88,6 +94,16 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
 
     async def browser_switch_tab(index: int | None = None, match: str = "") -> ToolResult:
         if await _use_keyboard():
+            if match:
+                wanted = _plain(match)
+                title = await keyboard.focus_tab(lambda t: wanted in _plain(t))
+                if title is None:
+                    return ToolResult(False, f"No hay ninguna pestaña abierta de «{match}». Si el usuario "
+                                             "quiere abrirla, usa browser_goto.")
+                return ToolResult(True, f"Pasé a la pestaña «{title}»")
+            if index is not None:
+                page = await keyboard.switch_index(index)
+                return ToolResult(True, f"Pasé a la pestaña {index}: {page.title}")
             page = await keyboard.next_tab()
             return ToolResult(True, f"Pasé a la siguiente pestaña: {page.title}")
         tab = await browser.switch_tab(None if index is None else index - 1, match or None)
@@ -97,7 +113,12 @@ def build(browser: BrowserController, os_adapter: OsAdapter | None = None,
 
     async def browser_list_tabs() -> ToolResult:
         if await _use_keyboard():
-            return _cdp_only()
+            tabs = await keyboard.list_tabs()
+            if not tabs:
+                return ToolResult(False, "No pude ver las pestañas del navegador")
+            listing = " | ".join(f"{t.index + 1}. {t.title[:45]}{' ←' if t.active else ''}" for t in tabs)
+            return ToolResult(True, listing, {"tabs": [{"index": t.index + 1, "title": t.title,
+                                                       "active": t.active} for t in tabs]})
         tabs = await browser.list_tabs()
         data = [{"index": t.index + 1, "title": t.title, "url": t.url, "active": t.active} for t in tabs]
         return ToolResult(True, _tabs_summary(tabs), {"tabs": data})

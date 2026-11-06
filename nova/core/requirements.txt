@@ -58,22 +58,17 @@ playwright>=1.45,<2
 psutil>=5.9,<8
 pyperclip>=1.8,<2
 mss>=9.0,<11               # capturas por ctypes: ~15 ms y sin arrastrar Pillow
+openpyxl>=3.1,<4           # leer Excel para los envíos en lote (read_spreadsheet)
+pillow>=10                 # abrir imágenes para el OCR (read_image)
+rapidocr>=3.10,<4          # OCR de imágenes: local, gratis, ~30 MB de modelos incluidos
+onnxruntime>=1.18          # motor de RapidOCR, en CPU
+pdfplumber>=0.11,<1        # texto de facturas en PDF y tablas de listas en PDF (trae pypdfium2)
 
 # --- Windows ------------------------------------------------------------------
 pycaw>=20240210 ; sys_platform == "win32"
 comtypes>=1.4 ; sys_platform == "win32"
 
-# OCR de Windows 11 (el de la herramienta de recortes), para que Nova pueda leer
-# lo que hay en pantalla —«abre el segundo chat»— sin un modelo de visión que no
-# cabría en la GPU. Medido: 0,14 s por pantalla completa, sin descargar modelos.
-# Son los enlaces de Python/WinRT partidos por espacio de nombres.
-winrt-runtime>=3.2 ; sys_platform == "win32"
-winrt-Windows.Foundation>=3.2 ; sys_platform == "win32"
-winrt-Windows.Foundation.Collections>=3.2 ; sys_platform == "win32"
-winrt-Windows.Globalization>=3.2 ; sys_platform == "win32"
-winrt-Windows.Graphics.Imaging>=3.2 ; sys_platform == "win32"
-winrt-Windows.Media.Ocr>=3.2 ; sys_platform == "win32"
-winrt-Windows.Storage.Streams>=3.2 ; sys_platform == "win32"
+# El OCR (pantalla e imágenes) es RapidOCR, más arriba: ya no se usa el de Windows.
 
 # --- Desarrollo ---------------------------------------------------------------
 pytest>=8.0,<10

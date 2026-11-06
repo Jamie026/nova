@@ -21,24 +21,23 @@ DEFAULTS: dict[str, Any] = {
     "language": "es",
     "ipc": {"host": "127.0.0.1", "port": 8765},
     "wake": {
-        # "porcupine"    local, ~1 % CPU, necesita clave gratuita de Picovoice
-        # "openwakeword" local, ~2 % CPU, sin clave ni registro (palabras fijas)
-        # "whisper"      sin clave, reconoce cualquier palabra, es el que más gasta
+        # La palabra es «Corrin» y Nova no atiende a ninguna otra: si el motor
+        # no puede reconocerla, se avisa y queda Ctrl+Shift+Espacio. Nunca se cae
+        # a una palabra distinta en silencio.
+        # "whisper"      sin clave, reconoce cualquier palabra (el predeterminado)
+        # "porcupine"    ~1 % CPU, necesita clave de Picovoice y un .ppn de «Corrin»
+        # "openwakeword" sólo si se pide a mano: únicamente sabe "hey jarvis"
         # "off"          sólo Ctrl+Shift+Espacio
-        # El orden de caída es porcupine → openwakeword → whisper: siempre queda
-        # algo que funcione aunque falten claves o modelos.
-        "engine": "porcupine",
-        "keyword": "nova",
-        # .ppn generado en console.picovoice.ai; si falta se cae a un keyword integrado
+        "engine": "whisper",
+        "keyword": "corrin",
+        # .ppn de «Corrin» generado en console.picovoice.ai (obligatorio con porcupine)
         "keyword_path": "",
-        "builtin_fallback": "jarvis",
         "sensitivity": 0.6,
-        # openwakeword: modelos preentrenados disponibles sin registro. No hay
-        # uno de "nova"; "hey_jarvis" es el que mejor le pega a este proyecto.
+        # openwakeword: sólo tiene modelos de palabras fijas, ninguno de «Corrin».
         "oww_model": "hey_jarvis",
         "oww_threshold": 0.5,
-        # Spotter por Whisper. Es el único de los tres que reconoce la palabra
-        # "Nova" dicha en español, y por eso importa que sea usable.
+        # Spotter por Whisper. Es el único de los tres que reconoce «Corrin» sin
+        # clave ni modelo entrenado, y por eso importa que sea usable.
         #
         # El valor por defecto era "cpu" por ahorrar batería, y estaba mal: medido
         # aquí, una ventana con voz cuesta tanto en CPU que el spotter llega al
@@ -48,7 +47,7 @@ DEFAULTS: dict[str, Any] = {
         "model": "tiny",
         "device": "auto",              # auto|cpu|cuda
         "window_ms": 1200,
-        "threshold": 0.72,
+        "threshold": 0.85,             # con 0,72 entraban «corrió», «corren» y «cortina»
     },
     "audio": {
         # Índice del micrófono. null = el predeterminado de Windows, que no
@@ -83,7 +82,11 @@ DEFAULTS: dict[str, Any] = {
         # «Discord», y «Corine» donde «Corin». Cuesta 0,43 s por frase frente a
         # 0,25 (medido en GPU) y 1,2 GB de VRAM en int8. Si vas justo de
         # memoria o prefieres las dos décimas, vuelve a "small".
-        "model": "medium",             # tiny|base|small|medium|large-v3
+        # `large-v3` por decisión del usuario: la mejor precisión. Son ~3 GB que
+        # baja `npm run models:download` (lo corre setup); si al arrancar no
+        # está en disco, Nova empieza con el mayor que haya (ver pick_available)
+        # en vez de quedarse sorda descargándolo.
+        "model": "large-v3",           # tiny|base|small|medium|large-v3
         # Modelo que se usa si NO hay GPU: en CPU, `small` tarda 1,7 s en
         # transcribir un «hola» (medido), y eso mata la sensación de inmediatez.
         "cpu_model": "tiny",
@@ -151,7 +154,12 @@ DEFAULTS: dict[str, Any] = {
     "session": {
         "greeting": "Te escucho.",
         "speak_greeting": False,       # earcon por defecto; la voz añade ~600 ms
+        # Una vez despierta, Nova NO se duerme por inactividad: sólo con «descansa»
+        # o con el botón de interrumpir (lo pidió el usuario). Con True vuelve a
+        # dormirse sola tras follow_up_seconds sin que nadie le hable.
+        "sleep_on_idle": False,
         "follow_up_seconds": 12,       # conversación continua sin repetir wake word
+        "dictation_pause_ms": 2500,    # silencio que da por terminado un dictado letra a letra
         # Lo que dice al oír «descansa» (o «eso es todo», «hasta luego»): se
         # calla, dice esto y se duerme sin pasar por el modelo. En el idioma
         # de la voz; vacío = se duerme sin decir nada.
@@ -169,6 +177,8 @@ DEFAULTS: dict[str, Any] = {
         # auto | confirm por nivel de riesgo. Lo que se manda a otra persona
         # (send_message, send_file_to_app con send=true) pregunta SIEMPRE, se
         # ponga lo que se ponga aquí: no se deshace y afecta a alguien más.
+        # Abrir apps, archivos y carpetas no pregunta, salvo un archivo que se
+        # ejecutaría al abrirlo (.exe, .bat, .vbs...).
         "low": "auto",
         "medium": "confirm",
         "high": "confirm",
@@ -178,9 +188,24 @@ DEFAULTS: dict[str, Any] = {
         #   ["read_screen", "click_item", "open_chat"]
         # Las de riesgo alto (send_message, type_text, click_at...) no entran
         # aquí ni aunque las pongas: enviar un mensaje no se deshace.
-        "auto_approve": [],
+        # process_invoices envía sin preguntar lo que es seguro y aparta lo dudoso:
+        # lo pidió el usuario («sólo pregunta si no está seguro del monto»).
+        "auto_approve": ["process_invoices"],
         "tool_allowlist": [],          # vacío = todas las herramientas registradas
         "app_allowlist": [],           # vacío = cualquier app instalada
+    },
+    # Envío de WhatsApp en lote (ver messaging_tools.BATCH_DEFAULTS).
+    "messaging": {
+        "country_code": "51",          # Perú: 987654321, +51…, 0051… y 51… valen igual
+        "batch_size": 20,              # mensajes por tanda
+        "batch_pause_min": 15,         # pausa entre tandas
+        # Espera entre mensajes, en segundos (lo pidió el usuario): 5 s, y 10 s si
+        # el envío pasa de large_batch mensajes.
+        "gap_s": [5, 5],
+        "gap_large_s": [10, 10],
+        "large_batch": 20,
+        "daily_limit": 150,            # tope en 24 h; el resto sigue al día siguiente
+        "warn_s": 10,                  # aviso antes de cada tanda (Nova usa ratón y teclado)
     },
     "browser": {
         # Cómo se controla el navegador:

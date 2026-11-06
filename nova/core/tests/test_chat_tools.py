@@ -3,7 +3,6 @@
 Lo que se prueba es la coreografía: qué teclas se pulsan, en qué orden, y qué se
 escribe. El adaptador falso lo anota todo.
 """
-import asyncio
 
 import pytest
 

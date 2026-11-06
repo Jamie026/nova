@@ -93,7 +93,7 @@ def build(os_adapter: OsAdapter, capture: ScreenCapture) -> list[Tool]:
     async def read_screen(window: str = "") -> ToolResult:
         """La pantalla como líneas de texto numeradas con su posición."""
         if not ocr.available():
-            return ToolResult(False, "El OCR de Windows no está disponible en este equipo")
+            return ToolResult(False, "Falta el OCR (RapidOCR): instálalo con npm run deps:core")
         box = None
         title = "pantalla completa"
         if window:
